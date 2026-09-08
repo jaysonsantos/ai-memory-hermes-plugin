@@ -44,8 +44,7 @@ def register(ctx: object) -> None:
         ("AI_MEMORY_SERVER_URL", "server_url"),
         ("AI_MEMORY_API_KEY", "api_key"),
         ("AI_MEMORY_AUTH_TOKEN", "auth_token"),
-        ("AI_MEMORY_WORKSPACE", "workspace"),
-        ("AI_MEMORY_PROJECT", "project"),
+        # Scope is not env-overridable; see the note in config.load_config.
         ("AI_MEMORY_RECALL_SCOPE", "recall_scope"),
     ):
         val = os.environ.get(env_key)

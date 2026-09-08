@@ -67,12 +67,16 @@ def test_load_config_from_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.delenv("AI_MEMORY_AUTH_TOKEN", raising=False)
     p = tmp_path / "ai-memory.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({
-        "server_url": "http://file:49374",
-        "auth_token": "file-token",
-        "workspace": "file-ws",
-        "project": "file-proj",
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "server_url": "http://file:49374",
+                "auth_token": "file-token",
+                "workspace": "file-ws",
+                "project": "file-proj",
+            }
+        )
+    )
     cfg = load_config(str(tmp_path))
     assert cfg.server_url == "http://file:49374"
     assert cfg.auth_token == "file-token"
@@ -120,9 +124,7 @@ def test_config_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert cfg.project == "roundtrip-proj"
 
 
-def test_load_config_corrupt_json(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_config_corrupt_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_MEMORY_SERVER_URL", raising=False)
     monkeypatch.delenv("AI_MEMORY_AUTH_TOKEN", raising=False)
     p = tmp_path / "ai-memory.json"
@@ -136,10 +138,14 @@ def test_load_config_corrupt_json(
 def test_load_config_env_overrides_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "ai-memory.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({
-        "server_url": "http://file:49374",
-        "auth_token": "file-token",
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "server_url": "http://file:49374",
+                "auth_token": "file-token",
+            }
+        )
+    )
     monkeypatch.setenv("AI_MEMORY_SERVER_URL", "http://env:49374")
     monkeypatch.setenv("AI_MEMORY_AUTH_TOKEN", "env-token")
     cfg = load_config(str(tmp_path))
@@ -152,11 +158,15 @@ def test_load_config_filters_extra_keys(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("AI_MEMORY_AUTH_TOKEN", raising=False)
     p = tmp_path / "ai-memory.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({
-        "server_url": "http://extra:49374",
-        "auth_token": "extra-token",
-        "unknown_key": "should be ignored",
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "server_url": "http://extra:49374",
+                "auth_token": "extra-token",
+                "unknown_key": "should be ignored",
+            }
+        )
+    )
     cfg = load_config(str(tmp_path))
     assert cfg.server_url == "http://extra:49374"
     assert not hasattr(cfg, "unknown_key")
@@ -177,11 +187,15 @@ def test_save_config_does_not_write_secrets_to_disk(tmp_path: Path) -> None:
 
 def test_save_config_strips_existing_secrets_from_file(tmp_path: Path) -> None:
     p = tmp_path / "ai-memory.json"
-    p.write_text(json.dumps({
-        "server_url": "http://old:49374",
-        "auth_token": "old-secret",
-        "api_key": "old-key",
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "server_url": "http://old:49374",
+                "auth_token": "old-secret",
+                "api_key": "old-key",
+            }
+        )
+    )
     save_config({"server_url": "http://new:49374"}, str(tmp_path))
     data = json.loads(p.read_text())
     assert data["server_url"] == "http://new:49374"
@@ -212,3 +226,72 @@ def test_get_config_schema_has_env_only() -> None:
             assert item.get("secret") is True
             assert item.get("env_only") is True
             assert "env_var" in item
+
+
+def test_workspace_and_project_are_not_env_overridable(
+    mock_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scope must come from ai-memory.json, never from the shell.
+
+    The ai-memory CLI exports AI_MEMORY_* into interactive shells, while the
+    Hermes gateway runs under systemd and sees no such shell. An env override
+    would let `hermes` started from a terminal write to a different project
+    than the daemon, splitting one profile's memory across two scopes with no
+    visible signal.
+    """
+    p = mock_home / "ai-memory.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"workspace": "hermes", "project": "orchestrator"}))
+
+    monkeypatch.setenv("AI_MEMORY_WORKSPACE", "personal-oss")
+    monkeypatch.setenv("AI_MEMORY_PROJECT", "some-other-repo")
+
+    config = load_config(str(mock_home))
+    assert config.workspace == "hermes"
+    assert config.project == "orchestrator"
+
+
+def test_recall_scope_is_env_overridable(mock_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scope WIDTH stays env-settable: it is the documented opt-in knob."""
+    mock_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("AI_MEMORY_RECALL_SCOPE", "global")
+    assert load_config(str(mock_home)).recall_scope == "global"
+
+
+def test_entry_point_ignores_workspace_and_project_env(
+    mock_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same guard on the register() path Hermes actually loads."""
+    import importlib
+    import sys
+
+    p = mock_home / "ai-memory.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"workspace": "hermes", "project": "orchestrator"}))
+
+    monkeypatch.setenv("HERMES_HOME", str(mock_home))
+    monkeypatch.setenv("AI_MEMORY_WORKSPACE", "personal-oss")
+    monkeypatch.setenv("AI_MEMORY_PROJECT", "some-other-repo")
+
+    entry = importlib.import_module("__init__") if "__init__" in sys.modules else None
+    if entry is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "ai_memory_entry",
+            Path(__file__).parent.parent / "plugins/memory/ai-memory/__init__.py",
+        )
+        assert spec and spec.loader
+        entry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(entry)
+
+    captured: dict[str, object] = {}
+
+    class _Ctx:
+        def register_memory_provider(self, provider: object) -> None:
+            captured["provider"] = provider
+
+    entry.register(_Ctx())
+    provider = captured["provider"]
+    assert provider._config.workspace == "hermes"  # type: ignore[attr-defined]
+    assert provider._config.project == "orchestrator"  # type: ignore[attr-defined]

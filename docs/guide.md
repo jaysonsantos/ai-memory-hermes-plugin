@@ -104,13 +104,26 @@ hermes ai-memory config
 
 ### Project Isolation
 
-Each Hermes profile gets a separate ai-memory project. The project name is derived as `hermes-{profile}`. Override via:
+Each Hermes profile gets a separate ai-memory project. When `project` is not
+configured, the name is derived as `hermes-{agent_identity}`. Set it in
+`$HERMES_HOME/ai-memory.json`:
 
-```bash
-export AI_MEMORY_PROJECT=my-project
+```json
+{ "workspace": "hermes", "project": "orchestrator" }
 ```
 
-Or set `project` in `$HERMES_HOME/ai-memory.json`.
+Or run `hermes ai-memory config-set project orchestrator`.
+
+**`workspace` and `project` are NOT environment variables.** The docs used to
+list `AI_MEMORY_PROJECT`, but no version of the provider ever read it. The
+omission is now deliberate: the ai-memory CLI exports `AI_MEMORY_*` into
+interactive shells, while the Hermes gateway runs under systemd and sees no
+such shell. An env override would let `hermes` started from a terminal write to
+a different project than the daemon, splitting one profile's memory across two
+scopes with no visible signal.
+
+`AI_MEMORY_RECALL_SCOPE` remains env-settable, because it widens or narrows
+reads only and never changes where writes land.
 
 ## Lifecycle Behavior
 

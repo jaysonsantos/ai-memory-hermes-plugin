@@ -74,6 +74,20 @@ fixes. Forked to `jaysonsantos/ai-memory-hermes-plugin` from upstream
 - Removed the `curl | bash` and `iex` one-liners from the README and docs. Both
   fetched branch HEAD and ran it.
 
+### Security (follow-up)
+
+- **`workspace` and `project` are not environment-overridable.** An interim
+  version of this change read `AI_MEMORY_WORKSPACE` and `AI_MEMORY_PROJECT`
+  from the environment. The ai-memory CLI exports `AI_MEMORY_*` into
+  interactive shells, while the Hermes gateway runs under systemd and sees no
+  such shell, so a stray export would send `hermes` started from a terminal to
+  a different project than the daemon — one profile's memory split across two
+  scopes with no visible signal. Scope now comes only from `ai-memory.json` and
+  the kwargs Hermes passes. `AI_MEMORY_RECALL_SCOPE` stays env-settable: it
+  changes reads only, never where writes land.
+- `docs/guide.md` documented `AI_MEMORY_PROJECT` as a working override. No
+  version of the provider ever read it. Corrected.
+
 ### Added
 
 - `tests/test_hermes_contract.py` — contract tests against the INSTALLED Hermes

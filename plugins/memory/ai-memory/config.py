@@ -152,8 +152,13 @@ def load_config(hermes_home: str) -> AiMemoryConfig:
         "AI_MEMORY_SERVER_URL": "server_url",
         "AI_MEMORY_AUTH_TOKEN": "auth_token",
         "AI_MEMORY_API_KEY": "api_key",
-        "AI_MEMORY_WORKSPACE": "workspace",
-        "AI_MEMORY_PROJECT": "project",
+        # NOTE: workspace and project are deliberately NOT env-overridable.
+        # The ai-memory CLI ships shell wiring that exports AI_MEMORY_* into
+        # interactive shells, while the Hermes gateway runs under systemd and
+        # sees no such shell. An env override would let `hermes` started from a
+        # terminal write to a different project than the daemon, splitting the
+        # memory of one profile across two scopes with no visible signal.
+        # Scope comes from ai-memory.json and the kwargs Hermes passes.
         "AI_MEMORY_RECALL_SCOPE": "recall_scope",
     }
     for env_key, attr in env_map.items():
