@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,16 +10,33 @@ import pytest
 
 
 def test_register_cli_creates_subcommands() -> None:
+    """Hermes passes the `hermes ai-memory` ArgumentParser, not a
+    _SubParsersAction; add_parser() on it raised AttributeError and aborted
+    plugin CLI registration for every plugin."""
     from cli import register_cli
 
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="command")
-    register_cli(subparsers)
-    assert subparsers.choices is not None
-    assert "status" in subparsers.choices
-    assert "config" in subparsers.choices
-    assert "config-set" in subparsers.choices
-    assert "link" in subparsers.choices
+    parser = argparse.ArgumentParser(prog="ai-memory")
+    register_cli(parser)
+
+    for argv in (["status"], ["config"], ["config-set", "k", "v"], ["link"], ["update"]):
+        assert parser.parse_args(argv).ai_memory_command == argv[0]
+
+
+def test_register_cli_sets_top_level_handler() -> None:
+    from cli import ai_memory_command, register_cli
+
+    parser = argparse.ArgumentParser(prog="ai-memory")
+    register_cli(parser)
+    assert parser.parse_args([]).func is ai_memory_command
+
+
+def test_config_set_arguments_are_parsed() -> None:
+    from cli import register_cli
+
+    parser = argparse.ArgumentParser(prog="ai-memory")
+    register_cli(parser)
+    args = parser.parse_args(["config-set", "workspace", "team"])
+    assert (args.key, args.value) == ("workspace", "team")
 
 
 def test_cmd_status_reachable(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -33,7 +50,30 @@ def test_cmd_status_reachable(capsys: pytest.CaptureFixture[str], tmp_path: Path
         cmd_status(args)
 
     captured = capsys.readouterr()
-    assert "reachable" in captured.out or "10 pages" in captured.out or "5 sessions" in captured.out
+    assert "reachable" in captured.out
+    assert "Pages:    10" in captured.out
+    assert "Sessions: 5" in captured.out
+
+
+def test_cmd_status_reads_nested_counts(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    """ai-memory 2.1.0 nests the counters under "counts"; reading the flat keys
+    printed "Pages: ?" against every current server."""
+    from cli import cmd_status
+
+    mock_client = MagicMock()
+    mock_client.status.return_value = {
+        "version": "2.1.0",
+        "counts": {"pages_latest": 59, "pages_all": 60, "sessions": 14},
+    }
+
+    with patch("cli.AiMemoryClient", return_value=mock_client):
+        cmd_status(argparse.Namespace(hermes_home=str(tmp_path)))
+
+    captured = capsys.readouterr()
+    assert "Version:  2.1.0" in captured.out
+    assert "Pages:    59" in captured.out
+    assert "Sessions: 14" in captured.out
+    assert "?" not in captured.out
 
 
 def test_cmd_status_unreachable(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -92,19 +132,18 @@ def test_cmd_config_shows_env_source(
     assert "set via env: AI_MEMORY_AUTH_TOKEN" in captured.out
 
 
-def test_cmd_config_set_rejects_secrets(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
+def test_cmd_config_set_rejects_secrets(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     from cli import cmd_config_set
 
-    args = argparse.Namespace(
-        hermes_home=str(tmp_path), key="auth_token", value="secret123"
-    )
+    args = argparse.Namespace(hermes_home=str(tmp_path), key="auth_token", value="secret123")
     cmd_config_set(args)
 
     captured = capsys.readouterr()
     assert "NOT WRITTEN TO DISK" in captured.out
     assert "AI_MEMORY_AUTH_TOKEN" in captured.out
+    # The value must never reach stdout: it would land in scrollback, terminal
+    # logs and any session recording.
+    assert "secret123" not in captured.out
     # Ensure nothing was written to disk
     assert not (tmp_path / "ai-memory.json").exists()
 
@@ -114,9 +153,7 @@ def test_cmd_config_set_allows_non_secrets(
 ) -> None:
     from cli import cmd_config_set
 
-    args = argparse.Namespace(
-        hermes_home=str(tmp_path), key="workspace", value="my-ws"
-    )
+    args = argparse.Namespace(hermes_home=str(tmp_path), key="workspace", value="my-ws")
     cmd_config_set(args)
 
     captured = capsys.readouterr()
@@ -125,19 +162,16 @@ def test_cmd_config_set_allows_non_secrets(
     assert data["workspace"] == "my-ws"
 
 
-def test_cmd_config_set_rejects_api_key(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
+def test_cmd_config_set_rejects_api_key(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     from cli import cmd_config_set
 
-    args = argparse.Namespace(
-        hermes_home=str(tmp_path), key="api_key", value="key-abc"
-    )
+    args = argparse.Namespace(hermes_home=str(tmp_path), key="api_key", value="key-abc")
     cmd_config_set(args)
 
     captured = capsys.readouterr()
     assert "NOT WRITTEN TO DISK" in captured.out
     assert "AI_MEMORY_API_KEY" in captured.out
+    assert "key-abc" not in captured.out
 
 
 def test_cmd_config_missing(
@@ -198,133 +232,124 @@ def test_cmd_link_already_linked(capsys: pytest.CaptureFixture[str], tmp_path: P
     assert "already" in captured.out.lower()
 
 
-def _build_fake_tarball(dest: Path, plugin_dir: Path) -> None:
-    """Create a zip archive that mimics the GitHub source tarball layout."""
-    import zipfile
-
-    prefix = "ai-memory-hermes-plugin-main/plugins/memory/ai-memory"
-    with zipfile.ZipFile(dest, "w") as zf:
-        for file in plugin_dir.rglob("*"):
-            if file.is_file():
-                arc_name = f"{prefix}/{file.relative_to(plugin_dir)}"
-                zf.write(file, arc_name)
-
-
 def test_cmd_update_registers_update_subcommand() -> None:
     from cli import register_cli
 
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="command")
-    register_cli(subparsers)
-    assert "update" in subparsers.choices
+    parser = argparse.ArgumentParser(prog="ai-memory")
+    register_cli(parser)
+    args = parser.parse_args(["update"])
+    assert args.ai_memory_command == "update"
 
 
-def test_cmd_update_not_installed(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    from cli import cmd_update
+def test_cmd_update_downloads_nothing(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    """The self-update path executed unreviewed branch-head code inside Hermes.
+
+    It was removed. `update` now only prints the pinned reinstall command.
+    """
+    import cli
 
     args = argparse.Namespace(hermes_home=str(tmp_path / ".hermes"))
-    cmd_update(args)
+    cli.cmd_update(args)
 
     captured = capsys.readouterr()
-    assert "not installed" in captured.out
+    assert "does not download code" in captured.out
+    assert "hermes plugins install" in captured.out
+    assert "--ref" in captured.out
+    # The module must not carry a downloader any more.
+    assert not hasattr(cli, "urllib")
+    assert not hasattr(cli, "zipfile")
+    assert not hasattr(cli, "REPO_TARBALL_URL")
 
 
-def test_cmd_update_from_github_preserves_config(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_cmd_update_reports_missing_install(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     from cli import cmd_update
 
-    monkeypatch.delenv("UPDATE_FROM_LOCAL", raising=False)
-    hermes_home = tmp_path / ".hermes"
-    plugin_dir = hermes_home / "plugins" / "ai-memory"
-    plugin_dir.mkdir(parents=True)
-    (plugin_dir / "__init__.py").write_text("# old")
-    config_file = hermes_home / "ai-memory.json"
-    config_file.write_text(json.dumps({"server_url": "http://custom:49374"}))
-
-    # Source files to "download"
-    source_plugin = tmp_path / "source" / "ai-memory"
-    source_plugin.mkdir(parents=True)
-    (source_plugin / "__init__.py").write_text("# new")
-    (source_plugin / "provider.py").write_text("# new provider")
-    tarball = tmp_path / "repo.zip"
-    _build_fake_tarball(tarball, source_plugin)
-
-    def fake_urlretrieve(url: str, dest: str) -> None:
-        shutil.copy(str(tarball), dest)
-
-    with patch("cli.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
-        args = argparse.Namespace(hermes_home=str(hermes_home))
-        cmd_update(args)
-
-    captured = capsys.readouterr()
-    assert "Done" in captured.out
-    assert "Restart Hermes" in captured.out
-    assert (plugin_dir / "__init__.py").read_text() == "# new"
-    assert json.loads(config_file.read_text())["server_url"] == "http://custom:49374"
-    backups = list((hermes_home / ".ai-memory-backups").glob("ai-memory.bak.*"))
-    assert len(backups) == 1
+    cmd_update(argparse.Namespace(hermes_home=str(tmp_path / ".hermes")))
+    assert "(not installed)" in capsys.readouterr().out
 
 
-def test_cmd_update_creates_default_config(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cmd_update_touches_nothing_on_disk(tmp_path: Path) -> None:
     from cli import cmd_update
 
-    monkeypatch.delenv("UPDATE_FROM_LOCAL", raising=False)
     hermes_home = tmp_path / ".hermes"
     plugin_dir = hermes_home / "plugins" / "ai-memory"
     plugin_dir.mkdir(parents=True)
-    (plugin_dir / "__init__.py").write_text("# old")
+    (plugin_dir / "__init__.py").write_text("# installed")
 
-    source_plugin = tmp_path / "source" / "ai-memory"
-    source_plugin.mkdir(parents=True)
-    (source_plugin / "__init__.py").write_text("# new")
-    tarball = tmp_path / "repo.zip"
-    _build_fake_tarball(tarball, source_plugin)
+    cmd_update(argparse.Namespace(hermes_home=str(hermes_home)))
 
-    def fake_urlretrieve(url: str, dest: str) -> None:
-        shutil.copy(str(tarball), dest)
-
-    with patch("cli.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
-        args = argparse.Namespace(hermes_home=str(hermes_home))
-        cmd_update(args)
-
-    config_file = hermes_home / "ai-memory.json"
-    assert config_file.exists()
-    config = json.loads(config_file.read_text())
-    assert config["server_url"] == "http://127.0.0.1:49374"
-    assert config["workspace"] == "hermes"
+    assert (plugin_dir / "__init__.py").read_text() == "# installed"
+    assert not (hermes_home / ".ai-memory-backups").exists()
 
 
-def test_cmd_update_lists_multiple_backups(
+def test_ai_memory_command_defaults_to_status(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from cli import ai_memory_command
+
+    mock_client = MagicMock()
+    mock_client.status.return_value = {"counts": {"pages_latest": 1, "sessions": 2}}
+    with patch("cli.AiMemoryClient", return_value=mock_client):
+        ai_memory_command(argparse.Namespace(hermes_home=str(tmp_path)))
+
+    assert "reachable" in capsys.readouterr().out
+
+
+def test_ai_memory_command_reports_an_unknown_subcommand(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli import ai_memory_command
+
+    ai_memory_command(argparse.Namespace(ai_memory_command="bogus"))
+    out = capsys.readouterr().out
+    assert "Unknown ai-memory command: bogus" in out
+    assert "status" in out
+
+
+def test_ai_memory_command_dispatches_to_the_subcommand(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from cli import ai_memory_command
+
+    ai_memory_command(argparse.Namespace(ai_memory_command="update", hermes_home=str(tmp_path)))
+    assert "does not download code" in capsys.readouterr().out
+
+
+def test_hermes_home_falls_back_to_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermes never sets args.hermes_home, so every subcommand used to raise
+    AttributeError once the parser was fixed."""
+    import cli
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "hermes_constants", None)
+    assert cli._hermes_home(argparse.Namespace()) == str(tmp_path)
+
+
+def test_hermes_home_prefers_an_explicit_attribute(tmp_path: Path) -> None:
+    import cli
+
+    assert cli._hermes_home(argparse.Namespace(hermes_home=str(tmp_path))) == str(tmp_path)
+
+
+def test_cmd_link_reports_a_non_symlink_target(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from cli import cmd_link
+
+    (tmp_path / "plugins" / "ai-memory").mkdir(parents=True)
+    cmd_link(argparse.Namespace(hermes_home=str(tmp_path)))
+    assert "not a symlink" in capsys.readouterr().out
+
+
+def test_cmd_config_set_reports_skipped_secrets(
     capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cli import cmd_update
+    from cli import cmd_config_set
 
-    monkeypatch.delenv("UPDATE_FROM_LOCAL", raising=False)
-    hermes_home = tmp_path / ".hermes"
-    plugin_dir = hermes_home / "plugins" / "ai-memory"
-    plugin_dir.mkdir(parents=True)
-    (plugin_dir / "__init__.py").write_text("# old")
-
-    # Pre-seed an older backup
-    old_backup = hermes_home / ".ai-memory-backups" / "ai-memory.bak.20250101000000"
-    old_backup.mkdir(parents=True)
-
-    source_plugin = tmp_path / "source" / "ai-memory"
-    source_plugin.mkdir(parents=True)
-    (source_plugin / "__init__.py").write_text("# new")
-    tarball = tmp_path / "repo.zip"
-    _build_fake_tarball(tarball, source_plugin)
-
-    def fake_urlretrieve(url: str, dest: str) -> None:
-        shutil.copy(str(tarball), dest)
-
-    with patch("cli.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
-        args = argparse.Namespace(hermes_home=str(hermes_home))
-        cmd_update(args)
-
-    captured = capsys.readouterr()
-    assert captured.out.count("ai-memory.bak.") >= 2
-    assert old_backup.name in captured.out
+    monkeypatch.setattr("cli.save_config", lambda values, home: ["auth_token"])
+    cmd_config_set(argparse.Namespace(hermes_home=str(tmp_path), key="workspace", value="ws"))
+    assert "skipped: auth_token" in capsys.readouterr().out

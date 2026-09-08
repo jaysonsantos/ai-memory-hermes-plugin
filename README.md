@@ -10,22 +10,29 @@ Connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to [ai-mem
 - **Memory mirroring** — built-in `MEMORY.md` writes mirrored to ai-memory wiki
 - **Hermes CLI integration** — `hermes memory setup`, `hermes memory status`
 - **Per-profile isolation** — project scoped by Hermes profile name
+- **Scoped recall** — reads stay inside the configured workspace/project; cross-project recall is opt-in
 - **3 tool schemas** — `ai_memory_search`, `ai_memory_write`, `ai_memory_status`
-- **94% test coverage** — linted with ruff, type-checked with mypy
+- **Host-contract tests** — asserted against the installed Hermes ABC, not against the plugin itself
+- **93% test coverage** — linted with ruff, type-checked with mypy
 
 ## Quick Start
 
 ```bash
-# Quick install via script (Linux/macOS)
-bash <(curl -sL https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.sh)
+# Install a reviewed commit through Hermes plugin tooling.
+# --ref pins the exact commit and Hermes records it in
+# $HERMES_HOME/plugins/.install-metadata.json
+hermes plugins install https://github.com/jaysonsantos/ai-memory-hermes-plugin.git#plugins/memory/ai-memory \
+    --ref <40-character-commit-sha> --enable
 
-# Enable and configure
-hermes plugins enable ai-memory
+# Configure
 hermes memory setup
 
 # Verify
 hermes memory status
 ```
+
+Do not pipe an installer from a branch head into a shell. Branch HEAD changes
+without notice, and Hermes imports and runs the installed files.
 
 Or download and run `scripts/install.sh` (Linux/macOS) or `scripts/install.ps1` (Windows) from the repository.
 
@@ -77,9 +84,26 @@ Written by `hermes memory setup` wizard. Only non-secret values are stored:
 {
   "server_url": "http://127.0.0.1:49374",
   "workspace": "hermes",
-  "project": "hermes-default"
+  "project": "hermes-default",
+  "recall_scope": "project"
 }
 ```
+
+### Recall scope
+
+`recall_scope` controls what recall reads. It does not affect writes, which
+always stay in the configured workspace/project.
+
+| Value | Behaviour |
+| --- | --- |
+| `project` (default) | Search only the configured `workspace`/`project`. |
+| `global` | Search every project on the server. |
+
+Recalled text is injected into the model turn. `global` therefore exposes every
+project's notes to this agent, so it is an explicit opt-in. Set it with
+`hermes memory setup`, `hermes ai-memory config-set recall_scope global`, or the
+`AI_MEMORY_RECALL_SCOPE` environment variable. An unrecognised value falls back
+to `project`.
 
 ### Secrets & Security
 
@@ -178,43 +202,46 @@ Pre-flight checks verify: Hermes CLI availability, Hermes process status, ai-mem
 
 ### One-liner (Linux/macOS)
 
-Requires `curl` and `tar`. The script downloads the plugin from GitHub when run via `curl`, then copies it into `$HERMES_HOME/plugins/ai-memory`.
+Run it from a checkout; it copies the plugin into `$HERMES_HOME/plugins/ai-memory`.
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.sh)
+bash scripts/install.sh
 ```
 
 Preview what the install would do (dry-run):
 
 ```bash
-bash <(curl -sL .../install.sh) --dry-run
+bash scripts/install.sh --dry-run
 ```
 
 Skip confirmation prompts for automation:
 
 ```bash
-FORCE=true bash <(curl -sL .../install.sh)
+FORCE=true bash scripts/install.sh
 ```
 
 Set `AI_MEMORY_SERVER_URL` before running to override the default server address:
 
 ```bash
-AI_MEMORY_SERVER_URL=http://10.0.0.42:49374 bash <(curl -sL ...)
+AI_MEMORY_SERVER_URL=http://10.0.0.42:49374 bash scripts/install.sh
 ```
 
 ### Windows (PowerShell)
 
-Requires PowerShell 5.1+ with .NET (default on Windows 10/11 and Windows Server 2016+). The script downloads the plugin from GitHub when run via `iex`, then copies it into `$HERMES_HOME\plugins\ai-memory`.
+Requires PowerShell 5.1+ with .NET (default on Windows 10/11 and Windows Server 2016+). Run it from a checkout; it copies the plugin into `$HERMES_HOME\plugins\ai-memory`.
 
 ```powershell
-powershell -c "iex ((Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.ps1').Content)"
+.\scripts\install.ps1
 ```
 
 With custom server URL:
 
 ```powershell
-powershell -c "$env:ServerUrl='http://10.0.0.42:49374'; iex ((Invoke-WebRequest -Uri '...').Content)"
+$env:ServerUrl='http://10.0.0.42:49374'; .\scripts\install.ps1
 ```
+
+Downloads require a pinned commit: set `$env:AI_MEMORY_PLUGIN_REF` to a full
+40-character commit SHA, and optionally `$env:AI_MEMORY_PLUGIN_SHA256`.
 
 ### Uninstall
 
@@ -256,8 +283,9 @@ bash scripts/update.sh
 bash scripts/update.sh --dry-run
 # Skip prompt:
 bash scripts/update.sh --yes
-# Or via one-liner:
-bash <(curl -sL https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/update.sh)
+# Update to a reviewed commit through Hermes (recommended):
+#   hermes plugins install https://github.com/jaysonsantos/ai-memory-hermes-plugin.git#plugins/memory/ai-memory \
+#       --ref <40-character-commit-sha> --force --enable
 ```
 
 Windows (PowerShell):

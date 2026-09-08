@@ -90,14 +90,32 @@ def test_search_without_scope_sends_no_workspace_or_project(cfg: AiMemoryConfig)
     assert params == {"q": "q", "limit": "3"}
 
 
-def test_provider_search_is_global(offline_provider: AiMemoryProvider) -> None:
-    """Recall must span every project so Claude/Codex memories are visible."""
+def test_provider_search_is_scoped_by_default(offline_provider: AiMemoryProvider) -> None:
+    """Recall stays inside the configured workspace/project.
+
+    Global recall read every project on the server and injected the text into
+    the Hermes turn. It is still available, but only as an explicit opt-in
+    (recall_scope="global").
+    """
     offline_provider._client.search.return_value = []
     offline_provider._search({"query": "shared fact", "max_results": 4})
-    offline_provider._client.search.assert_called_once_with(query="shared fact", limit=4)
     kwargs = offline_provider._client.search.call_args.kwargs
-    assert "workspace" not in kwargs
-    assert "project" not in kwargs
+    assert kwargs["query"] == "shared fact"
+    assert kwargs["limit"] == 4
+    assert kwargs["workspace"] == offline_provider._config.workspace
+    assert kwargs["project"] == offline_provider._config.project
+
+
+def test_provider_search_global_scope_is_opt_in(
+    offline_provider: AiMemoryProvider,
+) -> None:
+    """Cross-agent recall keeps working when the operator asks for it."""
+    offline_provider._config.recall_scope = "global"
+    offline_provider._client.search.return_value = []
+    offline_provider._search({"query": "shared fact", "max_results": 4})
+    kwargs = offline_provider._client.search.call_args.kwargs
+    assert kwargs["workspace"] is None
+    assert kwargs["project"] is None
 
 
 def test_provider_write_stays_scoped(offline_provider: AiMemoryProvider) -> None:
@@ -143,9 +161,7 @@ def test_search_empty_results(cfg: AiMemoryConfig) -> None:
 
 def test_search_honours_limit(cfg: AiMemoryConfig) -> None:
     client = AiMemoryClient(cfg)
-    seen = _capture(
-        client, httpx.Response(200, json=[{"path": f"{i}.md"} for i in range(10)])
-    )
+    seen = _capture(client, httpx.Response(200, json=[{"path": f"{i}.md"} for i in range(10)]))
     results = client.search("q", limit=2)
     assert dict(seen[0].url.params)["limit"] == "2"
     assert len(results) == 2
@@ -290,7 +306,9 @@ def test_explicit_workspace_override_wins(offline_provider: AiMemoryProvider) ->
 
 
 # ------------------------------------------------------- 11. error tolerance
-def test_send_hook_error_does_not_raise(cfg: AiMemoryConfig, caplog) -> None:
+def test_send_hook_error_does_not_raise(
+    cfg: AiMemoryConfig, caplog: pytest.LogCaptureFixture
+) -> None:
     """A failing hook is logged, never propagated into the conversation."""
     client = AiMemoryClient(cfg)
     _capture(client, httpx.Response(500, text="boom"))

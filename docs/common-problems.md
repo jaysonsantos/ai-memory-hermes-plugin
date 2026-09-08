@@ -155,16 +155,16 @@ REMOVE_CONFIG=true bash scripts/uninstall.sh
 
 ### Non-interactive mode warning ("non-interactive mode detected")
 
-**Cause:** The script was piped or run without a TTY (e.g. via `curl | bash`). Scripts detect missing stdin and proceed with a warning.
+**Cause:** The script was run without a TTY (e.g. from CI). Scripts detect missing stdin and proceed with a warning.
 
 **Fix:** This is expected behavior. To suppress the warning:
 
 ```bash
 # Option 1: pass --yes
-bash <(curl -sL .../install.sh) --yes
+bash scripts/install.sh --yes
 
 # Option 2: set FORCE=true
-FORCE=true bash <(curl -sL .../install.sh)
+FORCE=true bash scripts/install.sh
 ```
 
 For automation (CI/CD), always use `FORCE=true` or `--yes`/`-Yes`.
@@ -193,21 +193,24 @@ bash scripts/install.sh --yes
 
 **Fix:** This is expected. The dry-run output is a preview — run without `--dry-run` to apply changes.
 
-### One-liner fails with "plugin source not found"
+### Install fails with "plugin source not found"
 
-**Cause:** Older versions of `install.sh` / `install.ps1` assumed they were being run from a cloned repo. When invoked via the curl / `iex` one-liner, the script could not locate the local plugin files.
-
-**Check:**
-```bash
-# Are you using the latest install script from main?
-curl -sL https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.sh | head -n 15
-```
+**Cause:** `install.sh` / `install.ps1` install from the checkout they sit in. When the checkout is absent they download instead, and a download needs a pinned commit.
 
 **Fix:**
-- Re-run the current one-liner. The install scripts now detect the missing local source and download the plugin from GitHub automatically.
-- If you prefer not to download, clone the repository and run the script locally:
+- Preferred: install through Hermes, which records the pin for you:
   ```bash
-  git clone https://github.com/MrLuciano/ai-memory-hermes-plugin.git
+  hermes plugins install https://github.com/jaysonsantos/ai-memory-hermes-plugin.git#plugins/memory/ai-memory \
+      --ref <40-character-commit-sha> --force --enable
+  ```
+- Or set a full 40-character commit SHA and re-run the script:
+  ```bash
+  AI_MEMORY_PLUGIN_REF=<40-hex-sha> bash scripts/install.sh
+  ```
+  The script refuses to download an unpinned branch head.
+- Or clone the repository and run the script locally:
+  ```bash
+  git clone https://github.com/jaysonsantos/ai-memory-hermes-plugin.git
   cd ai-memory-hermes-plugin
   bash scripts/install.sh
   ```

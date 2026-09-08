@@ -3,7 +3,7 @@
 #
 # Works when run:
 #   • locally from a cloned repo (scripts/install.sh or ./scripts/install.sh)
-#   • via the curl one-liner: bash <(curl -sL .../scripts/install.sh)
+#   • from a checkout: ./scripts/install.sh
 #
 # Options:
 #   --dry-run   Show what would be done without making changes
@@ -13,7 +13,9 @@
 #   FORCE=true            Skip confirmation prompts (same as --yes)
 #   HERMES_HOME           Hermes profile directory (default: ~/.hermes)
 #   AI_MEMORY_SERVER_URL  Server URL for config (default: http://127.0.0.1:49374)
-#   REPO_TARBALL_URL      Override GitHub tarball URL
+#   AI_MEMORY_PLUGIN_REF     REQUIRED for download: 40-character commit SHA
+#   AI_MEMORY_PLUGIN_SHA256  Optional sha256 of the downloaded tarball
+#   AI_MEMORY_PLUGIN_REPO    owner/repo to download from (default: the fork)
 set -euo pipefail
 
 # --- Flag parsing ---
@@ -36,14 +38,15 @@ for arg in "$@"; do
       echo "  FORCE=true            Skip confirmation prompts"
       echo "  HERMES_HOME           Hermes profile directory (default: ~/.hermes)"
       echo "  AI_MEMORY_SERVER_URL  Server URL (default: http://127.0.0.1:49374)"
-      echo "  REPO_TARBALL_URL      Override GitHub tarball URL"
+      echo "  AI_MEMORY_PLUGIN_REF     REQUIRED for download: 40-character commit SHA"
+      echo "  AI_MEMORY_PLUGIN_SHA256  Optional sha256 of the downloaded tarball"
+      echo "  AI_MEMORY_PLUGIN_REPO    owner/repo to download from (default: the fork)"
       exit 0
       ;;
   esac
 done
 
 AI_MEMORY_SERVER_URL="${AI_MEMORY_SERVER_URL:-http://127.0.0.1:49374}"
-REPO_TARBALL_URL="${REPO_TARBALL_URL:-https://github.com/MrLuciano/ai-memory-hermes-plugin/archive/refs/heads/main.tar.gz}"
 
 # --- Helper functions ---
 
@@ -52,6 +55,51 @@ info()  { echo "  $*"; }
 warn()  { echo "  WARNING: $*" >&2; }
 err()   { echo "ERROR: $*" >&2; }
 ok()    { echo "  OK: $*"; }
+
+# --- Pinned source resolution ---------------------------------------------
+# Downloads are pinned to an immutable commit. A branch-head tarball
+# (archive/refs/heads/main) changes without notice, is not checksummed and is
+# imported and executed by Hermes, so it is not accepted here.
+REPO_SLUG="${AI_MEMORY_PLUGIN_REPO:-jaysonsantos/ai-memory-hermes-plugin}"
+PLUGIN_REF="${AI_MEMORY_PLUGIN_REF:-}"
+PLUGIN_SHA256="${AI_MEMORY_PLUGIN_SHA256:-}"
+
+require_pinned_ref() {
+  if ! printf '%s' "$PLUGIN_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+    err "AI_MEMORY_PLUGIN_REF must be a full 40-character commit SHA."
+    err "Refusing to download an unpinned branch head."
+    err "Example:"
+    err "  AI_MEMORY_PLUGIN_REF=<40-hex-sha> $0"
+    err "Or install through Hermes, which records the pin for you:"
+    err "  hermes plugins install https://github.com/$REPO_SLUG.git#plugins/memory/ai-memory \\"
+    err "      --ref <40-hex-sha> --force --enable"
+    exit 1
+  fi
+  REPO_TARBALL_URL="https://codeload.github.com/$REPO_SLUG/tar.gz/$PLUGIN_REF"
+}
+
+# Download the pinned tarball into $1 and verify AI_MEMORY_PLUGIN_SHA256 when set.
+fetch_pinned_tarball() {
+  local dest="$1"
+  curl -fsSL "$REPO_TARBALL_URL" -o "$dest"
+  if [ -n "$PLUGIN_SHA256" ]; then
+    if ! command -v sha256sum &>/dev/null; then
+      err "sha256sum is required to verify AI_MEMORY_PLUGIN_SHA256."
+      exit 1
+    fi
+    local actual
+    actual="$(sha256sum "$dest" | cut -d" " -f1)"
+    if [ "$actual" != "$PLUGIN_SHA256" ]; then
+      err "checksum mismatch for $REPO_TARBALL_URL"
+      err "  expected $PLUGIN_SHA256"
+      err "  actual   $actual"
+      exit 1
+    fi
+    ok "checksum verified"
+  else
+    warn "AI_MEMORY_PLUGIN_SHA256 is not set; the commit pin is the only integrity check."
+  fi
+}
 
 # Run a command, or print it in dry-run mode
 run() {
@@ -182,12 +230,14 @@ if [ ! -f "$PLUGIN_SRC/__init__.py" ]; then
     exit 1
   fi
 
+  require_pinned_ref
   DOWNLOAD_DIR="$(mktemp -d)"
   info "Downloading plugin from $REPO_TARBALL_URL ..."
   if [ "$DRY_RUN" = "true" ]; then
     info "[DRY RUN] Would download from $REPO_TARBALL_URL"
   else
-    curl -fsSL "$REPO_TARBALL_URL" | tar -xz -C "$DOWNLOAD_DIR" --strip-components=1
+    fetch_pinned_tarball "$DOWNLOAD_DIR/repo.tar.gz"
+    tar -xzf "$DOWNLOAD_DIR/repo.tar.gz" -C "$DOWNLOAD_DIR" --strip-components=1
   fi
   PLUGIN_SRC="$DOWNLOAD_DIR/plugins/memory/ai-memory"
 

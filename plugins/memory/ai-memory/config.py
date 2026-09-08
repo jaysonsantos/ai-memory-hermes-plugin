@@ -18,6 +18,14 @@ if _PLUGIN_DIR not in sys.path:
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:49374"
 
+# Recall scope. "project" restricts every search to the configured
+# workspace/project pair; "global" opts in to reading every project on the
+# server. Global recall injects other projects' notes into the Hermes turn, so
+# it stays opt-in.
+SCOPE_PROJECT = "project"
+SCOPE_GLOBAL = "global"
+DEFAULT_RECALL_SCOPE = SCOPE_PROJECT
+
 
 @dataclass
 class AiMemoryConfig:
@@ -26,6 +34,7 @@ class AiMemoryConfig:
     auth_token: str = ""
     workspace: str = "hermes"
     project: str = "hermes-default"
+    recall_scope: str = DEFAULT_RECALL_SCOPE
 
 
 def get_config_schema() -> list[dict[str, Any]]:
@@ -64,7 +73,28 @@ def get_config_schema() -> list[dict[str, Any]]:
             "default": "hermes-default",
             "required": False,
         },
+        {
+            "key": "recall_scope",
+            "description": (
+                "Recall scope: 'project' searches only the configured "
+                "workspace/project; 'global' reads every project on the server"
+            ),
+            "default": DEFAULT_RECALL_SCOPE,
+            "choices": [SCOPE_PROJECT, SCOPE_GLOBAL],
+            "required": False,
+        },
     ]
+
+
+def normalize_recall_scope(value: Any) -> str:
+    """Return a known recall scope. Anything unrecognised falls back to the
+    scoped default, so a typo cannot silently widen recall to every project."""
+    scope = str(value or "").strip().lower()
+    if scope == SCOPE_GLOBAL:
+        return SCOPE_GLOBAL
+    if scope and scope != SCOPE_PROJECT:
+        log.warning("unknown recall_scope %r; falling back to %r", value, SCOPE_PROJECT)
+    return SCOPE_PROJECT
 
 
 def _secret_keys() -> dict[str, str]:
@@ -122,6 +152,9 @@ def load_config(hermes_home: str) -> AiMemoryConfig:
         "AI_MEMORY_SERVER_URL": "server_url",
         "AI_MEMORY_AUTH_TOKEN": "auth_token",
         "AI_MEMORY_API_KEY": "api_key",
+        "AI_MEMORY_WORKSPACE": "workspace",
+        "AI_MEMORY_PROJECT": "project",
+        "AI_MEMORY_RECALL_SCOPE": "recall_scope",
     }
     for env_key, attr in env_map.items():
         val = os.environ.get(env_key)
@@ -129,5 +162,8 @@ def load_config(hermes_home: str) -> AiMemoryConfig:
             overrides[attr] = val
 
     overrides.setdefault("server_url", DEFAULT_SERVER_URL)
+    overrides["recall_scope"] = normalize_recall_scope(
+        overrides.get("recall_scope", DEFAULT_RECALL_SCOPE)
+    )
 
     return AiMemoryConfig(**{k: v for k, v in overrides.items() if hasattr(AiMemoryConfig, k)})

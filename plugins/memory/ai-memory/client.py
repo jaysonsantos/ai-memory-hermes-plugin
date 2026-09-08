@@ -17,12 +17,23 @@ from config import AiMemoryConfig  # noqa: E402
 
 log = logging.getLogger("ai-memory")
 
-SEARCH_TIMEOUT = 10.0
-HOOK_TIMEOUT = 0.5
+# Timeouts are sized for a REMOTE HTTPS server, not for loopback.
+# Measured against https://ai-memory.home.jayson.com.br on 2026-09-08:
+# cold connect (TCP + TLS + request) 2.28s, warm request ~0.11s.
+#
+# Search must finish inside the Hermes external-prefetch budget
+# (_EXTERNAL_PREFETCH_TIMEOUT_S = 8.0s in agent/memory_manager.py). A client
+# timeout above that budget lets Hermes give up first and park the provider as
+# "stuck" until the call returns, so keep it below 8.0s.
+SEARCH_TIMEOUT = 6.0
+# Hooks run on daemon threads and swallow failures, so a too-short timeout
+# loses the turn in silence. 5.0s covers a cold TLS handshake.
+HOOK_TIMEOUT = 5.0
 WRITE_TIMEOUT = 10.0
-# Handoff is fetched once, synchronously, on session start against a
-# loopback server. Keep it short so a stalled server cannot delay startup.
-HANDOFF_TIMEOUT = 2.0
+READ_TIMEOUT = 6.0
+# Handoff is fetched once, synchronously, on session start. 8.0s tolerates a
+# cold connection while still bounding startup.
+HANDOFF_TIMEOUT = 8.0
 
 
 class AiMemoryClient:
@@ -102,6 +113,32 @@ class AiMemoryClient:
         r = self._request("POST", "/admin/write-page", json=payload, timeout=WRITE_TIMEOUT)
         r.raise_for_status()
         return r.json()
+
+    def read_page(
+        self,
+        path: str,
+        workspace: str,
+        project: str,
+    ) -> str | None:
+        """Return a page body, or ``None`` when the page does not exist.
+
+        ai-memory 2.1.0 exposes ``GET /admin/read-page`` and requires all three
+        of ``workspace``, ``project`` and ``path``; a missing page answers 404.
+        Callers use this to read-modify-write a page instead of overwriting it.
+        """
+        if not (path and workspace and project):
+            return None
+        params = {"workspace": workspace, "project": project, "path": path}
+        r = self._request("GET", "/admin/read-page", params=params, timeout=READ_TIMEOUT)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, dict):
+            log.warning("read-page response has unexpected type: %s", type(data).__name__)
+            return None
+        body = data.get("body")
+        return body if isinstance(body, str) else None
 
     def status(self) -> dict[str, Any]:
         r = self._request("GET", "/admin/status", timeout=SEARCH_TIMEOUT)

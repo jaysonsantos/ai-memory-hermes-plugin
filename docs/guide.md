@@ -24,7 +24,7 @@ python -m plugins.memory.ai_memory.cli link
 **Quick one-liner (Linux/macOS):**
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.sh)
+bash scripts/install.sh
 ```
 
 **Using uv pip (pre-installs httpx):**
@@ -280,16 +280,16 @@ When piped (non-interactive), scripts detect the missing TTY, print a warning, a
 
 ### Linux/macOS One-liner
 
-Requires `curl` and `tar`. When run via `curl`, the script downloads the plugin from GitHub and copies it into `$HERMES_HOME/plugins/ai-memory`.
+Run it from a checkout; it copies the plugin into `$HERMES_HOME/plugins/ai-memory`. It downloads only when the checkout is absent, and then only a pinned commit (`AI_MEMORY_PLUGIN_REF`, optionally verified with `AI_MEMORY_PLUGIN_SHA256`).
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.sh)
+bash scripts/install.sh
 ```
 
 Override the server URL:
 
 ```bash
-AI_MEMORY_SERVER_URL=http://10.0.0.42:49374 bash <(curl -sL ...)
+AI_MEMORY_SERVER_URL=http://10.0.0.42:49374 bash scripts/install.sh
 ```
 
 ### Windows One-liner
@@ -297,7 +297,7 @@ AI_MEMORY_SERVER_URL=http://10.0.0.42:49374 bash <(curl -sL ...)
 Requires PowerShell 5.1+ with .NET (default on Windows 10/11 and Windows Server 2016+). When run via `iex`, the script downloads the plugin from GitHub and copies it into `$HERMES_HOME\plugins\ai-memory`.
 
 ```powershell
-powershell -c "iex ((Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/MrLuciano/ai-memory-hermes-plugin/main/scripts/install.ps1').Content)"
+.\scripts\install.ps1
 ```
 
 ### Uninstall

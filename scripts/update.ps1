@@ -1,6 +1,6 @@
-# update.ps1 — Update the ai-memory Hermes plugin on Windows
+﻿# update.ps1 — Update the ai-memory Hermes plugin on Windows
 #
-# Defaults to downloading the latest plugin from GitHub. Set $env:UPDATE_FROM_LOCAL=true
+# Downloads a PINNED commit from GitHub (AI_MEMORY_PLUGIN_REF). Set $env:UPDATE_FROM_LOCAL=true
 # to update from a cloned repository instead (preserves the junction install).
 #
 # Options:
@@ -21,13 +21,53 @@ $Script:DoDryRun = $DryRun -or ($env:DRY_RUN -eq "true")
 $Script:DoYes = $Yes -or ($env:FORCE -eq "true")
 $UpdateFromLocal = if ($env:UPDATE_FROM_LOCAL) { $env:UPDATE_FROM_LOCAL } else { $FromLocal.ToString().ToLower() }
 
-$RepoTarballUrl = if ($env:REPO_TARBALL_URL) { $env:REPO_TARBALL_URL } else { "https://github.com/MrLuciano/ai-memory-hermes-plugin/archive/refs/heads/main.zip" }
 
 # --- Helper functions ---
 function Write-Info  { param([string]$Msg) Write-Host "  $Msg" -ForegroundColor Cyan }
 function Write-Ok    { param([string]$Msg) Write-Host "  OK: $Msg" -ForegroundColor Green }
 function Write-Warn  { param([string]$Msg) Write-Host "  WARNING: $Msg" -ForegroundColor Yellow }
 function Write-Err   { param([string]$Msg) { Write-Host "ERROR: $Msg" -ForegroundColor Red } }
+
+# --- Pinned source resolution ---------------------------------------------
+# Downloads are pinned to an immutable commit. A branch-head zip
+# (archive/refs/heads/main) changes without notice, is not checksummed and is
+# imported and executed by Hermes, so it is not accepted here.
+$RepoSlug = if ($env:AI_MEMORY_PLUGIN_REPO) { $env:AI_MEMORY_PLUGIN_REPO } else { "jaysonsantos/ai-memory-hermes-plugin" }
+$PluginRef = $env:AI_MEMORY_PLUGIN_REF
+$PluginSha256 = $env:AI_MEMORY_PLUGIN_SHA256
+$Script:RepoZipUrl = $null
+$Script:ExtractedRoot = $null
+
+function Assert-PinnedRef {
+    if (-not ($PluginRef -match '^[0-9a-f]{40}$')) {
+        Write-Host "ERROR: AI_MEMORY_PLUGIN_REF must be a full 40-character commit SHA." -ForegroundColor Red
+        Write-Host "ERROR: Refusing to download an unpinned branch head." -ForegroundColor Red
+        Write-Host "ERROR: Or install through Hermes, which records the pin for you:" -ForegroundColor Red
+        Write-Host "ERROR:   hermes plugins install https://github.com/$RepoSlug.git#plugins/memory/ai-memory --ref <40-hex-sha> --force --enable" -ForegroundColor Red
+        exit 1
+    }
+    $Script:RepoZipUrl = "https://codeload.github.com/$RepoSlug/zip/$PluginRef"
+    $Script:ExtractedRoot = "$($RepoSlug.Split('/')[-1])-$PluginRef"
+}
+
+# Download the pinned zip to $Path and verify AI_MEMORY_PLUGIN_SHA256 when set.
+function Get-PinnedZip {
+    param([string]$Path)
+    Invoke-WebRequest -Uri $Script:RepoZipUrl -OutFile $Path -UseBasicParsing
+    if ($PluginSha256) {
+        $actual = (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $PluginSha256.ToLower()) {
+            Write-Host "ERROR: checksum mismatch for $Script:RepoZipUrl" -ForegroundColor Red
+            Write-Host "ERROR:   expected $PluginSha256" -ForegroundColor Red
+            Write-Host "ERROR:   actual   $actual" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  OK: checksum verified" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  WARNING: AI_MEMORY_PLUGIN_SHA256 is not set; the commit pin is the only integrity check." -ForegroundColor Yellow
+    }
+}
 
 function Invoke-OrDryRun {
     param([scriptblock]$Action, [string]$Description)
@@ -117,7 +157,7 @@ function Invoke-Preflight {
         Write-Info "Source:        $localSrc (local repo)"
     }
     else {
-        Write-Info "Source:        $RepoTarballUrl (GitHub)"
+        Write-Info "Source:        GitHub, pinned commit $PluginRef"
     }
 
     # 6. Hermes CLI
@@ -171,7 +211,7 @@ if ($Script:DoDryRun) {
 Invoke-Preflight
 
 # Source label for display
-$sourceLabel = if ($UpdateFromLocal -eq "true") { "local repo" } else { "GitHub ($RepoTarballUrl)" }
+$sourceLabel = if ($UpdateFromLocal -eq "true") { "local repo" } else { "GitHub, pinned commit $PluginRef" }
 
 # Show planned actions
 Write-Host ""
@@ -227,21 +267,22 @@ if ($UpdateFromLocal -eq "true") {
     Write-Info "Source:      $pluginSrc (local repo)"
 }
 else {
+    Assert-PinnedRef
     $downloadDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-    Write-Info "Downloading from $RepoTarballUrl ..."
+    Write-Info "Downloading from $Script:RepoZipUrl ..."
     if ($Script:DoDryRun) {
-        Write-Info "[DRY RUN] Would download from $RepoTarballUrl"
-        $pluginSrc = Join-Path $downloadDir "ai-memory-hermes-plugin-main\plugins\memory\ai-memory"
+        Write-Info "[DRY RUN] Would download from $Script:RepoZipUrl"
+        $pluginSrc = Join-Path $downloadDir "$Script:ExtractedRoot\plugins\memory\ai-memory"
     }
     else {
         $null = New-Item -ItemType Directory -Force -Path $downloadDir
         $tarball = Join-Path $downloadDir "repo.zip"
-        Invoke-WebRequest -Uri $RepoTarballUrl -OutFile $tarball -UseBasicParsing
+        Get-PinnedZip -Path $tarball
 
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::ExtractToDirectory($tarball, $downloadDir)
 
-        $pluginSrc = Join-Path $downloadDir "ai-memory-hermes-plugin-main\plugins\memory\ai-memory"
+        $pluginSrc = Join-Path $downloadDir "$Script:ExtractedRoot\plugins\memory\ai-memory"
         if (-not (Test-Path (Join-Path $pluginSrc "__init__.py"))) {
             Write-Err "downloaded plugin source not found at $pluginSrc"
             Remove-Item -Recurse -Force $downloadDir -ErrorAction SilentlyContinue

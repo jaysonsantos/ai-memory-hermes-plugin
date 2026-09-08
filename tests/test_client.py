@@ -11,10 +11,12 @@ from config import AiMemoryConfig
 
 @pytest.fixture
 def client() -> AiMemoryClient:
-    return AiMemoryClient(AiMemoryConfig(
-        server_url="http://localhost:49374",
-        auth_token="test-token",
-    ))
+    return AiMemoryClient(
+        AiMemoryConfig(
+            server_url="http://localhost:49374",
+            auth_token="test-token",
+        )
+    )
 
 
 def test_client_search_success(client: AiMemoryClient) -> None:
@@ -198,9 +200,12 @@ def test_client_search_handles_non_dict_response(client: AiMemoryClient) -> None
 
 def test_client_search_normalizes_legacy_envelope_and_applies_limit(client: AiMemoryClient) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={
-            "results": [{"path": "first.md"}, "invalid", {"path": "second.md"}],
-        })
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"path": "first.md"}, "invalid", {"path": "second.md"}],
+            },
+        )
 
     client._transport = httpx.MockTransport(handler)
     assert client.search("test query", limit=1) == [{"path": "first.md"}]
@@ -214,7 +219,70 @@ def test_client_write_page_with_tier_and_pinned(client: AiMemoryClient) -> None:
         return httpx.Response(200, json={"ok": True})
 
     client._transport = httpx.MockTransport(handler)
-    result = client.write_page(
-        "notes/test.md", "# Hello", tier="semantic", pinned=True
-    )
+    result = client.write_page("notes/test.md", "# Hello", tier="semantic", pinned=True)
     assert result["ok"] is True
+
+
+# ---------------------------------------------------------------- read-page
+# ai-memory 2.1.0: GET /admin/read-page?workspace=&project=&path=
+# The mirror needs it to read-modify-write a page instead of overwriting it.
+
+
+def test_client_read_page_returns_body(client: AiMemoryClient) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/admin/read-page"
+        assert dict(request.url.params) == {
+            "workspace": "hermes",
+            "project": "orchestrator",
+            "path": "notes/a.md",
+        }
+        return httpx.Response(200, json={"path": "notes/a.md", "body": "# Hello"})
+
+    client._transport = httpx.MockTransport(handler)
+    assert client.read_page("notes/a.md", "hermes", "orchestrator") == "# Hello"
+
+
+def test_client_read_page_returns_none_for_missing_page(client: AiMemoryClient) -> None:
+    """The server answers 404 for a page that does not exist yet."""
+    client._transport = httpx.MockTransport(
+        lambda request: httpx.Response(404, json={"error": "No such file or directory"})
+    )
+    assert client.read_page("notes/missing.md", "hermes", "orchestrator") is None
+
+
+def test_client_read_page_requires_a_full_scope(client: AiMemoryClient) -> None:
+    """A half scope has no meaning: ai-memory resolves a project within a
+    workspace. Refuse locally rather than send an ambiguous request."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("must not reach the server")
+
+    client._transport = httpx.MockTransport(handler)
+    assert client.read_page("notes/a.md", "", "orchestrator") is None
+    assert client.read_page("notes/a.md", "hermes", "") is None
+    assert client.read_page("", "hermes", "orchestrator") is None
+
+
+def test_client_read_page_tolerates_an_unexpected_shape(client: AiMemoryClient) -> None:
+    client._transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json=["not", "a", "page"])
+    )
+    assert client.read_page("notes/a.md", "hermes", "orchestrator") is None
+
+
+def test_client_read_page_tolerates_a_missing_body(client: AiMemoryClient) -> None:
+    client._transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"path": "notes/a.md", "body": None})
+    )
+    assert client.read_page("notes/a.md", "hermes", "orchestrator") is None
+
+
+def test_client_timeouts_suit_a_remote_server() -> None:
+    """The defaults were tuned for loopback. Against the configured HTTPS
+    server a cold connect measured 2.28s, so a 0.5s hook timeout lost the turn
+    in silence. Search must still finish inside Hermes' 8.0s prefetch budget."""
+    import client as client_mod
+
+    assert client_mod.HOOK_TIMEOUT >= 2.0
+    assert client_mod.HANDOFF_TIMEOUT >= 3.0
+    assert client_mod.SEARCH_TIMEOUT < 8.0

@@ -10,15 +10,36 @@ import pytest
 
 # Plugin is loaded as a standalone module (not a package) by Hermes,
 # so tests import sibling modules via bare names + sys.path to match
-# the production loading model exactly.
+# the production loading model exactly. It stays at position 0: the Hermes
+# tree below also ships top-level `cli.py` and `client.py`, and the plugin's
+# own modules must win.
 sys.path.insert(
     0,
     str(Path(__file__).parent.parent / "plugins/memory/ai-memory"),
 )
 
-from client import AiMemoryClient
-from config import AiMemoryConfig
-from provider import AiMemoryProvider
+
+def _hermes_root() -> Path | None:
+    """Installed Hermes source tree, or None when Hermes is absent."""
+    import os
+
+    home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+    for candidate in (home / "hermes-agent", home.parent / "hermes-agent"):
+        if (candidate / "agent" / "memory_provider.py").is_file():
+            return candidate
+    return None
+
+
+# APPENDED, never inserted: the provider imports the real
+# agent.memory_provider ABC when Hermes is installed, so the contract tests
+# check the plugin against the host instead of against its own fallback.
+HERMES_ROOT = _hermes_root()
+if HERMES_ROOT is not None and str(HERMES_ROOT) not in sys.path:
+    sys.path.append(str(HERMES_ROOT))
+
+from client import AiMemoryClient  # noqa: E402
+from config import AiMemoryConfig  # noqa: E402
+from provider import AiMemoryProvider  # noqa: E402
 
 
 @pytest.fixture

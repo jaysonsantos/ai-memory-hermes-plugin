@@ -13,6 +13,7 @@ Dataclass in `config.py`. Fields:
 | `auth_token` | `str` | `""` | Auth token alias |
 | `workspace` | `str` | `"hermes"` | ai-memory workspace name |
 | `project` | `str` | `"hermes-default"` | ai-memory project name |
+| `recall_scope` | `str` | `"project"` | `project` searches only the configured workspace/project; `global` reads every project on the server |
 
 Precedence: **env vars > file config > defaults**
 
@@ -29,6 +30,7 @@ Precedence: **env vars > file config > defaults**
 | `auth_token` | yes | yes | `AI_MEMORY_AUTH_TOKEN` | `""` |
 | `workspace` | no | no | — | `"hermes"` |
 | `project` | no | no | — | `"hermes-default"` |
+| `recall_scope` | no | no | `AI_MEMORY_RECALL_SCOPE` | `"project"` |
 
 **Env Only** fields are never written to `ai-memory.json`. They must be set via environment variables.
 
@@ -147,12 +149,12 @@ Entry point in `__init__.py`:
 
 | Platform | Script | Requirements | Behavior |
 |---|---|---|---|
-| Linux/macOS | `scripts/install.sh` | `curl`, `tar` | Symlinks plugin from local repo; downloads from GitHub when run via `bash <(curl ...)` |
-| Windows | `scripts/install.ps1` | PowerShell 5.1+ with .NET | Creates junction from local repo; downloads from GitHub when run via `iex` |
+| Linux/macOS | `scripts/install.sh` | `curl`, `tar` | Symlinks plugin from local repo; downloads only a pinned commit (`AI_MEMORY_PLUGIN_REF`) |
+| Windows | `scripts/install.ps1` | PowerShell 5.1+ with .NET | Creates junction from local repo; downloads only a pinned commit (`AI_MEMORY_PLUGIN_REF`) |
 | Linux/macOS | `scripts/uninstall.sh` | `bash` | Removes plugin directory/symlink; disables plugin in Hermes if CLI exists |
 | Windows | `scripts/uninstall.ps1` | PowerShell 5.1+ | Removes plugin directory/junction; disables plugin in Hermes if CLI exists |
-| Linux/macOS | `scripts/update.sh` | `curl`, `tar` | Downloads latest plugin from GitHub, backs up old install, preserves config |
-| Windows | `scripts/update.ps1` | PowerShell 5.1+ with .NET | Downloads latest plugin from GitHub, backs up old install, preserves config |
+| Linux/macOS | `scripts/update.sh` | `curl`, `tar` | Downloads a pinned commit, backs up old install, preserves config |
+| Windows | `scripts/update.ps1` | PowerShell 5.1+ with .NET | Downloads a pinned commit, backs up old install, preserves config |
 
 All scripts run **pre-flight checks** before making changes:
 
@@ -180,7 +182,9 @@ When piped (non-interactive), scripts detect the missing TTY, print a warning, a
 |---|---|---|
 | `HERMES_HOME` | install/uninstall | Hermes profile directory (default: `~/.hermes` / `%USERPROFILE%\.hermes`) |
 | `AI_MEMORY_SERVER_URL` | install | Initial `server_url` written to `ai-memory.json` |
-| `REPO_TARBALL_URL` | install | Override the GitHub tarball/zip URL used by the one-liner fallback |
+| `AI_MEMORY_PLUGIN_REF` | install, update | REQUIRED to download: full 40-character commit SHA. No branch heads. |
+| `AI_MEMORY_PLUGIN_SHA256` | install, update | Optional sha256 of the downloaded archive; mismatch aborts |
+| `AI_MEMORY_PLUGIN_REPO` | install, update | `owner/repo` to download from (default: `jaysonsantos/ai-memory-hermes-plugin`) |
 | `REMOVE_CONFIG` | uninstall (bash) | Set to `true` to delete `$HERMES_HOME/ai-memory.json` |
 | `FORCE` | all scripts | Set to `true` to skip confirmation prompts (same as `--yes` / `-Yes`) |
 | `DRY_RUN` | all scripts | Set to `true` to enable dry-run mode (same as `--dry-run` / `-DryRun`) |

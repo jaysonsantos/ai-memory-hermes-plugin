@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.2.0] — 2026-09-08
+
+Compatibility with Hermes Agent 0.21.1 and ai-memory 2.1.0, plus two security
+fixes. Forked to `jaysonsantos/ai-memory-hermes-plugin` from upstream
+`087e31014fca810f47310b7a0c1a3f93e927fcae`.
+
+### Fixed — Hermes 0.21.1 compatibility
+
+- **Tool schemas now use `parameters`, not `input_schema`** (blocking). Hermes
+  hands each schema to the active model adapter. The openai-codex preflight
+  raised `tools[N] is missing valid parameters`, and one bad tool aborts the
+  whole request, so every model call in a session failed. On Anthropic the
+  tools reached the model with no properties, so the model could not pass a
+  query.
+- **`queue_prefetch` accepts keyword-only `session_id`.** Hermes always passes
+  it. The old signature raised `TypeError`, which Hermes caught as a non-fatal
+  warning, so background recall never ran.
+- **`on_memory_write` mirrors the actions Hermes actually sends.** It accepted
+  `write` and `append`; Hermes sends `add`, `replace` and `remove`, so no write
+  was ever mirrored. The mirror now reads the page, applies the action and
+  writes it back: `add` appends, `replace` swaps the entry matching
+  `metadata["old_text"]`, `remove` drops it. The previous code passed the single
+  entry as the whole page body, which would have erased every other entry. An
+  absent or ambiguous `old_text` leaves the page untouched.
+- **`recall_status()` implemented.** It returns the Hermes `RecallStatus` for
+  the last prefetch, so the recall indicator appears.
+- **Plugin CLI registration repaired.** `register_cli` now takes the
+  `ArgumentParser` Hermes passes, not a `_SubParsersAction`. The old code called
+  `add_parser()` on it and raised `AttributeError`, which aborted the whole
+  plugin CLI loop — other plugins lost their commands too. The module also
+  exposes the `ai-memory_command` handler Hermes looks up by name.
+- **CLI subcommands resolve `hermes_home` themselves.** Hermes dispatches
+  `args.func(args)` on a namespace with no `hermes_home`, so every subcommand
+  raised `AttributeError`.
+
+### Fixed — ai-memory 2.1.0 compatibility
+
+- `hermes ai-memory status` reads `counts.pages_latest` and `counts.sessions`.
+  2.1.0 nests the counters, so the previous flat keys printed `Pages: ?`.
+- Timeouts sized for a remote HTTPS server. A cold connect measured 2.28 s
+  against the configured server, and the 0.5 s hook timeout lost turns in
+  silence. `HOOK_TIMEOUT` 0.5 → 5.0, `HANDOFF_TIMEOUT` 2.0 → 8.0,
+  `SEARCH_TIMEOUT` 10.0 → 6.0 (Hermes bounds external prefetch at 8.0 s, so the
+  client must fail first).
+- New `AiMemoryClient.read_page()` for `GET /admin/read-page`, used by the
+  memory mirror.
+
+### Changed — recall scope
+
+- **Recall is scoped to the configured workspace/project by default.** It used
+  to search every project on the server and inject the text into the Hermes
+  turn. Cross-project recall is still available through the new `recall_scope`
+  config key (`project` by default, `global` to opt in, also settable with
+  `AI_MEMORY_RECALL_SCOPE`). An unrecognised value narrows to `project`.
+- `queue_prefetch` now caches its result and `prefetch` consumes it, so the
+  common recall path costs no network round-trip inside the turn.
+
+### Security
+
+- **Removed the unpinned self-update.** `hermes ai-memory update` fetched
+  `archive/refs/heads/main.zip`, extracted it over the installed plugin and let
+  Hermes import and run it — branch HEAD, no commit pin, no checksum, no
+  signature, and the source URL was overridable through the environment. The
+  command now downloads nothing and prints the pinned
+  `hermes plugins install --ref <sha>` procedure instead.
+- **Install and update scripts refuse an unpinned download.** They require
+  `AI_MEMORY_PLUGIN_REF` to be a full 40-character commit SHA and verify
+  `AI_MEMORY_PLUGIN_SHA256` when it is set. `REPO_TARBALL_URL` was removed.
+- **`hermes ai-memory config-set` no longer echoes a secret value.** It printed
+  `export AI_MEMORY_AUTH_TOKEN='<value>'`, putting the secret into scrollback,
+  terminal logs and any session recording. It now prints the variable name only.
+- Removed the `curl | bash` and `iex` one-liners from the README and docs. Both
+  fetched branch HEAD and ran it.
+
+### Added
+
+- `tests/test_hermes_contract.py` — contract tests against the INSTALLED Hermes
+  Agent. They drive the provider through the real `MemoryManager`,
+  `normalize_tool_schema`, the codex preflight and
+  `_attach_plugin_cli_command`. 20 of them fail against upstream `087e310`. The
+  previous suite passed 123 tests while the plugin was incompatible, because it
+  asserted the plugin's own shape. They skip when Hermes is absent.
+- Coverage is scoped to the plugin (`tool.coverage.run.source`); the contract
+  tests import the Hermes tree, which otherwise sank the gate.
+- `tool.uv.dev-dependencies` moved to `dependency-groups.dev` (deprecated).
+
+
 ## [Unreleased]
 
 ### Added
