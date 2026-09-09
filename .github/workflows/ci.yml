@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Every job declares the least permission it needs. The default is none.
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Lint and type-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Check that uv.lock matches pyproject.toml
+        run: uv lock --check
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Ruff lint
+        run: uv run ruff check --output-format=github .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: Mypy
+        run: uv run mypy .
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Pytest with coverage gate
+        run: uv run pytest --cov --cov-report=term-missing
+
+  hermes-contract:
+    # Runs tests/test_hermes_contract.py against a pinned Hermes Agent source
+    # tree. The tests skip when the tree is absent, so this job is the only
+    # place in CI where the host contract is asserted.
+    name: Hermes host-contract tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      HERMES_HOME: ${{ github.workspace }}/hermes-home
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out Hermes Agent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 2237be355906fbe6065ce1815711eee52b2d646e # v2026.9.7
+          path: hermes-home/hermes-agent
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install dependencies
+        run: |
+          uv sync --locked
+          # hermes_cli.main imports python-dotenv. It is a Hermes dependency,
+          # not a plugin dependency, so it is installed here only.
+          uv pip install python-dotenv
+      - name: Check that the Hermes tree is where conftest.py looks for it
+        run: test -f "$HERMES_HOME/hermes-agent/agent/memory_provider.py"
+      - name: Contract tests
+        run: uv run --no-sync pytest tests/test_hermes_contract.py -rs --no-cov
+
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install audit tools
+        run: uv sync --locked --only-group audit
+      - name: Audit locked dependencies for known vulnerabilities
+        run: |
+          uv export --format requirements-txt --no-emit-project --no-hashes \
+            --no-dev --output-file requirements-audit.txt
+          uv run --only-group audit pip-audit --strict -r requirements-audit.txt
+      - name: Audit GitHub Actions workflows (zizmor)
+        run: uv run --only-group audit zizmor --min-severity low --min-confidence medium .github/workflows
+      - name: Shellcheck installer scripts
+        run: shellcheck --severity=warning scripts/*.sh

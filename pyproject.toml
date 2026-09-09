@@ -2,10 +2,34 @@
 name = "ai-memory-hermes-plugin"
 version = "0.2.2"
 description = "Hermes Agent memory provider backed by ai-memory"
+readme = "README.md"
 requires-python = ">=3.10"
+# Original author of the upstream project (MrLuciano/ai-memory-hermes-plugin).
+authors = [{ name = "Luciano Marinho" }]
+# Maintainer of this fork (jaysonsantos/ai-memory-hermes-plugin). See NOTICE.md.
+maintainers = [{ name = "Jayson Reis" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 dependencies = ["httpx>=0.28"]
 
+[project.urls]
+Repository = "https://github.com/jaysonsantos/ai-memory-hermes-plugin"
+Upstream = "https://github.com/MrLuciano/ai-memory-hermes-plugin"
+Changelog = "https://github.com/jaysonsantos/ai-memory-hermes-plugin/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jaysonsantos/ai-memory-hermes-plugin/issues"
+
 [dependency-groups]
+audit = [
+    "pip-audit>=2.10.1",
+    "zizmor>=1.30.1",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio",
@@ -21,8 +45,15 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["N999"]
+# B: bugbear, S: bandit security checks, C4: comprehensions, RUF: ruff-specific.
+select = ["E", "F", "I", "N", "W", "UP", "B", "S", "C4", "RUF"]
+# N999: the plugin directory is "ai-memory" (Hermes convention, dash allowed).
+# RUF005: slice concatenation reads clearer than unpacking for page edits.
+ignore = ["N999", "RUF005"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert and fixed fake tokens on purpose.
+"tests/**" = ["S101", "S105", "S106"]
 
 [tool.mypy]
 python_version = "3.10"

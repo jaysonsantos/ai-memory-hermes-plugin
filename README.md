@@ -1,6 +1,19 @@
 # ai-memory Hermes Memory Provider Plugin
 
+[![CI](https://github.com/jaysonsantos/ai-memory-hermes-plugin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jaysonsantos/ai-memory-hermes-plugin/actions/workflows/ci.yml)
+
 Connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to [ai-memory](https://github.com/akitaonrails/ai-memory) as a first-class `MemoryProvider` plugin — automatic prefetch, turn sync, session finalization, and wiki search/write tools.
+
+## Origin and attribution
+
+This repository is a fork of
+[MrLuciano/ai-memory-hermes-plugin](https://github.com/MrLuciano/ai-memory-hermes-plugin).
+Luciano Marinho ([@MrLuciano](https://github.com/MrLuciano)) created the
+original plugin. This fork adds Hermes 0.21.1 and ai-memory 2.1 support and
+the fixes listed in [CHANGELOG.md](CHANGELOG.md) from version 0.2.0 onward.
+The upstream repository has no license file, so the original author keeps
+all rights to the upstream work. See [NOTICE.md](NOTICE.md) for the full
+attribution and the list of upstream contributors.
 
 ## Features
 
@@ -13,7 +26,7 @@ Connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to [ai-mem
 - **Scoped recall** — reads stay inside the configured workspace/project; cross-project recall is opt-in
 - **3 tool schemas** — `ai_memory_search`, `ai_memory_write`, `ai_memory_status`
 - **Host-contract tests** — asserted against the installed Hermes ABC, not against the plugin itself
-- **93% test coverage** — linted with ruff, type-checked with mypy
+- **92% test coverage** — linted with ruff, type-checked with mypy, gated in CI on Python 3.10 to 3.14
 
 ## Quick Start
 
@@ -150,9 +163,26 @@ hermes ai-memory config-set auth_token my-secret
 ```bash
 uv sync
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy .
 uv run pytest --cov
 ```
+
+CI runs the same commands on every push and pull request. It also runs the
+host-contract tests against a pinned Hermes Agent checkout, `pip-audit` on
+the locked dependencies, `zizmor` on the workflow files, and `shellcheck` on
+the installer scripts. To run the audits locally:
+
+```bash
+uv sync --locked --group audit
+uv export --format requirements-txt --no-emit-project --no-hashes --no-dev \
+    --output-file requirements-audit.txt
+uv run pip-audit --strict -r requirements-audit.txt
+uv run zizmor .github/workflows
+```
+
+Dependabot opens weekly pull requests for GitHub Actions and Python
+dependency updates.
 
 ### Project Structure
 

@@ -1,6 +1,6 @@
 # ai-memory-hermes-plugin
 
-##ai-memory Hermes Memory Provider Plugin
+## ai-memory Hermes Memory Provider Plugin
 Connects [Hermes Agent](https://hermes-agent.nousresearch.com) to [ai-memory](https://github.com/akitaonrails/ai-memory) as a first-class memory provider.
 
 ## Quick Start
@@ -23,9 +23,13 @@ hermes memory status
 ```bash
 uv sync
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy .
 uv run pytest --cov
 ```
+
+CI (`.github/workflows/ci.yml`) runs these commands on Python 3.10 to 3.14,
+plus the Hermes host-contract tests, `pip-audit`, `zizmor`, and `shellcheck`.
 
 ## Project Structure
 
@@ -46,9 +50,11 @@ plugins/memory/ai-memory/
 - [CHANGELOG.md](CHANGELOG.md) — version history
 
 ## Project info
-- **Version:** 0.1.0
+- **Version:** 0.2.2
 - **Branch:** main
-- **Remote:** https://github.com/MrLuciano/ai-memory-hermes-plugin.git
+- **Remote (this fork):** https://github.com/jaysonsantos/ai-memory-hermes-plugin.git
+- **Upstream (original author, MrLuciano):** https://github.com/MrLuciano/ai-memory-hermes-plugin.git
+- **Attribution:** see [NOTICE.md](NOTICE.md)
 
 
 

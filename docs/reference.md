@@ -206,6 +206,14 @@ When piped (non-interactive), scripts detect the missing TTY, print a warning, a
 
 | Check | Command | Target |
 |---|---|---|
-| Lint | `ruff check .` | 0 errors |
-| Types | `mypy .` | 0 issues |
-| Tests | `pytest --cov` | 91 tests, ≥89% coverage |
+| Lint | `uv run ruff check .` | 0 errors |
+| Format | `uv run ruff format --check .` | 0 files to change |
+| Types | `uv run mypy .` | 0 issues |
+| Tests | `uv run pytest --cov` | 191 tests, ≥89% coverage |
+| Dependency audit | `uv run pip-audit --strict -r requirements-audit.txt` | 0 known vulnerabilities |
+| Workflow audit | `uv run zizmor .github/workflows` | 0 findings |
+| Shell scripts | `shellcheck --severity=warning scripts/*.sh` | 0 warnings |
+
+CI runs every check on each push and pull request. The test job runs on
+Python 3.10, 3.11, 3.12, 3.13, and 3.14. A separate job runs
+`tests/test_hermes_contract.py` against a pinned Hermes Agent checkout.

@@ -32,7 +32,7 @@ except ImportError:
     from abc import ABC as _ABC
     from dataclasses import dataclass as _dataclass
 
-    class MemoryProvider(_ABC):  # type: ignore[no-redef]
+    class MemoryProvider(_ABC):  # type: ignore[no-redef]  # noqa: B024 - import shim
         pass
 
     @_dataclass(frozen=True)

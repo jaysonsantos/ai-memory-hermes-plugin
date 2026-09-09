@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- GitHub Actions CI (`.github/workflows/ci.yml`): ruff lint and format,
+  mypy, pytest with the coverage gate on Python 3.10 to 3.14, the Hermes
+  host-contract tests against a pinned Hermes Agent checkout, `pip-audit`
+  on the locked dependencies, `zizmor` on the workflows, and `shellcheck`
+  on the installer scripts. Actions are pinned to commit SHAs and each job
+  has read-only permissions.
+- Dependabot for GitHub Actions and Python dependencies.
+- `NOTICE.md` with the upstream attribution, the fork point, and the
+  license status. `pyproject.toml` now records the original author, the
+  fork maintainer, and the repository URLs.
+- Ruff rule sets `B` (bugbear), `S` (bandit), `C4`, and `RUF`.
+
+### Changed
+
+- `config.py` uses `contextlib.suppress` for the two ignored read errors.
+  No behaviour change.
+- `scripts/update.sh` drops an unused variable that shellcheck reported.
+
 ## [0.2.2] — 2026-09-09
 
 ### Changed — global recall through the REST API

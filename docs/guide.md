@@ -224,7 +224,18 @@ uv run ptw -- --cov
 
 ```bash
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy .
+```
+
+### Security audits
+
+```bash
+uv sync --locked --group audit
+uv export --format requirements-txt --no-emit-project --no-hashes --no-dev \
+    --output-file requirements-audit.txt
+uv run pip-audit --strict -r requirements-audit.txt
+uv run zizmor .github/workflows
 ```
 
 ### Adding a New Tool

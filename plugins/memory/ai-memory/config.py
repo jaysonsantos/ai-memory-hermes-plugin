@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -124,10 +125,8 @@ def save_config(values: dict[str, Any], hermes_home: str) -> list[str]:
     p.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, Any] = {}
     if p.exists():
-        try:
+        with contextlib.suppress(Exception):
             existing = json.loads(p.read_text())
-        except Exception:
-            pass
 
     # Also strip any secrets already persisted in the file
     for secret_key in secrets:
@@ -143,10 +142,8 @@ def load_config(hermes_home: str) -> AiMemoryConfig:
     overrides: dict[str, Any] = {}
 
     if p.exists():
-        try:
+        with contextlib.suppress(json.JSONDecodeError, OSError):
             overrides = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
 
     env_map: dict[str, str] = {
         "AI_MEMORY_SERVER_URL": "server_url",

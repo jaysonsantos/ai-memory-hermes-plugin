@@ -137,7 +137,6 @@ confirm() {
 
 # --- Pre-flight checks ---
 preflight() {
-  local checks_passed=true
   echo ""
   echo "==> Pre-flight checks"
   echo ""

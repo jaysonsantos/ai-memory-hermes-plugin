@@ -52,3 +52,10 @@ logs/
 .env
 .env.*
 !.env.example
+
+# Tooling caches and CI artifacts
+.ruff_cache/
+.coverage.*
+coverage.xml
+requirements-audit.txt
+/hermes-home/
