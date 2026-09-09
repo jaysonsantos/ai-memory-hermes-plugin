@@ -252,9 +252,16 @@ The plugin inserts its directory into `sys.path` at import time, but some Hermes
 
 **Check:**
 ```bash
-# Direct search
-curl "http://127.0.0.1:49374/admin/search?q=test"
+# Cross-project search, the same query global recall sends
+curl -H "Authorization: Bearer $AI_MEMORY_AUTH_TOKEN" \
+  "http://127.0.0.1:49374/api/v1/search?q=test&limit=3"
+# One project, FTS5 only (project recall uses MCP memory_query instead)
+curl -H "Authorization: Bearer $AI_MEMORY_AUTH_TOKEN" \
+  "http://127.0.0.1:49374/api/v1/search?q=test&workspace=hermes&project=orchestrator"
 ```
+
+A 404 from `/api/v1/search` means the server runs without `--enable-web`. The
+plugin then falls back to MCP `memory_query(global=true)` for global recall.
 
 **Note:** The plugin returns empty string on no results — this is normal. The agent will see no injected context and rely on explicit `ai_memory_search` tool calls.
 

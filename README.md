@@ -57,7 +57,7 @@ Hermes Agent → MemoryProvider ABC → AiMemoryProvider → AiMemoryClient → 
 |---|---|---|
 | `is_available()` | Checks `server_url` is configured | Sync |
 | `initialize()` | Resolves workspace/project from kwargs | Sync |
-| `prefetch(query)` | `GET /admin/search` | Sync |
+| `prefetch(query)` | `GET /api/v1/search` (global) or MCP `memory_query` (project) | Sync |
 | `queue_prefetch(query)` | Spawns prefetch thread | Daemon thread |
 | `sync_turn(user, assistant)` | `POST /hook?event=user-prompt` | Daemon thread |
 | `on_session_end(messages)` | `POST /hook?event=session-end` | Daemon thread |
@@ -96,8 +96,8 @@ always stay in the configured workspace/project.
 
 | Value | Behaviour |
 | --- | --- |
-| `project` (default) | Search only the configured `workspace`/`project`. |
-| `global` | Search every project on the server. |
+| `project` (default) | Search only the configured `workspace`/`project` through MCP `memory_query` (hybrid ranker). |
+| `global` | Search every project on the server through `GET /api/v1/search` with no scope parameters (cross-project FTS5, the same search as `memory_query(global=true)`). |
 
 Recalled text is injected into the model turn. `global` therefore exposes every
 project's notes to this agent, so it is an explicit opt-in. Set it with

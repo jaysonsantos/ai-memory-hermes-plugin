@@ -40,13 +40,26 @@ Typed HTTP wrapper in `client.py`. Accepts `AiMemoryConfig`. Persistent `httpx.C
 
 ### Methods
 
-#### `search(query, workspace=None, project=None, limit=3) → list[dict]`
+#### `search(query, workspace=None, project=None, limit=3, global_search=False) → list[dict]`
 
-**HTTP:** `GET /admin/search?q=<query>&limit=<n>&workspace=<ws>&project=<proj>`  
-**Timeout:** 10s  
-**Raises:** `httpx.HTTPStatusError` on non-2xx
+Two explicit scopes. The client never infers a scope.
 
-Returns list of result dicts with keys like `path`, `snippet`, `score`.
+| Call | HTTP | Server search |
+|---|---|---|
+| `search(q, workspace=ws, project=proj)` | `POST /mcp` → `memory_query` with `workspace` and `project` | Hybrid ranker: FTS5, entity, graph, vector when an embedder exists. Also returns `_global` preference hits. |
+| `search(q, global_search=True)` | `GET /api/v1/search?q=<query>&limit=<n>` with no scope parameters | Cross-project FTS5 (`SearchMode::Global`). Same query and reranking as `memory_query(global=true)`. |
+
+**Timeout:** 6s (`SEARCH_TIMEOUT`, inside the 8s Hermes prefetch budget)  
+**Raises:** `httpx.HTTPStatusError` on non-2xx, `RuntimeError` on an MCP error
+envelope, `ValueError` on a half scope or on a scope next to `global_search`.
+
+Global hits carry `workspace`, `project`, `path`, `title`, `kind`, `snippet`
+and `rank`. Project hits carry `id`, `path`, `title`, `snippet` and `rank`.
+
+`/api/v1` exists only when ai-memory runs with `--enable-web`. If the route
+answers 404, the client falls back to `memory_query(global=true)` and reads
+its `global_hits` list. It renames `workspace_name` and `project_name` to
+`workspace` and `project`, so the hit shape stays the same.
 
 #### `write_page(path, body, tags=None, tier=None, pinned=False, workspace=None, project=None) → dict`
 

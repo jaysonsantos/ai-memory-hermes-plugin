@@ -36,6 +36,27 @@ READ_TIMEOUT = 6.0
 # cold connection while still bounding startup.
 HANDOFF_TIMEOUT = 8.0
 
+# Cross-project search. ai-memory mounts /api/v1 only with --enable-web; the
+# MCP endpoint is always mounted and serves the fallback.
+GLOBAL_SEARCH_PATH = "/api/v1/search"
+MCP_PATH = "/mcp"
+
+
+def _hit_list(value: Any, limit: int) -> list[dict[str, Any]]:
+    """Keep the dict entries of a hit list, bounded by ``limit``."""
+    if not isinstance(value, list):
+        return []
+    return [hit for hit in value if isinstance(hit, dict)][:limit]
+
+
+def _normalize_global_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    """Rename MCP ``global_hits`` scope keys to the /api/v1/search names."""
+    out = dict(hit)
+    for src_key, dst_key in (("workspace_name", "workspace"), ("project_name", "project")):
+        if src_key in out and dst_key not in out:
+            out[dst_key] = out.pop(src_key)
+    return out
+
 
 class AiMemoryClient:
     def __init__(self, config: AiMemoryConfig) -> None:
@@ -70,22 +91,59 @@ class AiMemoryClient:
         limit: int = 3,
         global_search: bool = False,
     ) -> list[dict[str, Any]]:
-        """Search through ai-memory's canonical MCP ``memory_query`` tool.
+        """Search the wiki in one of two explicit scopes. Scope is never inferred.
 
-        Global search is explicit in ai-memory 2.x: ``global=true`` selects the
-        cross-workspace/project FTS stream. Project search instead supplies the
-        complete workspace/project pair. Never infer global scope merely from
-        missing scope fields; that can resolve to the server's default project.
+        ``global_search=True`` reads every workspace and project through
+        ``GET /api/v1/search`` with no scope parameters. ai-memory 2.1.1 treats
+        a request on that route without ``workspace``, ``project`` or ``scopes``
+        as the cross-project search (``SearchMode::Global`` in
+        ``ai-memory-web/src/routes/api.rs``). It runs the same ``pages_fts``
+        query and authority reranking as MCP ``memory_query(global=true)``
+        (``ReaderPool::search_pages`` versus ``search_pages_with_meta``), and
+        every hit carries ``workspace`` and ``project``. A scope passed together
+        with ``global_search`` is a caller bug and raises.
+
+        Project search sends the complete workspace/project pair to MCP
+        ``memory_query``. That path runs the hybrid ranker (FTS5, entity and
+        graph streams, plus vector when the server has an embedder) and unions
+        the ``_global`` preferences scope. The REST route is FTS5-only for a
+        project, so project recall stays on MCP.
+
+        On MCP an omitted scope resolves to the server's active project, never
+        to global. This client never sends an MCP query without a scope.
         """
-        arguments: dict[str, Any] = {"query": query, "limit": limit}
         if global_search:
-            arguments["global"] = True
-        elif workspace and project:
-            arguments["workspace"] = workspace
-            arguments["project"] = project
-        else:
+            if workspace or project:
+                raise ValueError("global search cannot be combined with workspace/project")
+            return self._search_global(query, limit)
+        if not (workspace and project):
             raise ValueError("project search requires workspace and project")
+        data = self._memory_query(
+            {"query": query, "limit": limit, "workspace": workspace, "project": project}
+        )
+        return _hit_list(data.get("hits"), limit)
 
+    def _search_global(self, query: str, limit: int) -> list[dict[str, Any]]:
+        params = {"q": query, "limit": limit}
+        r = self._request("GET", GLOBAL_SEARCH_PATH, params=params, timeout=SEARCH_TIMEOUT)
+        if r.status_code == 404:
+            # /api/v1 is mounted only when ai-memory runs with --enable-web.
+            # MCP memory_query(global=true) reads the same FTS5 index, so it is
+            # an equivalent fallback; its hits live under ``global_hits``.
+            log.info("GET %s answered 404; using MCP memory_query global=true", GLOBAL_SEARCH_PATH)
+            data = self._memory_query({"query": query, "limit": limit, "global": True})
+            return [_normalize_global_hit(hit) for hit in _hit_list(data.get("global_hits"), limit)]
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list):
+            log.warning(
+                "%s response has unexpected type: %s", GLOBAL_SEARCH_PATH, type(data).__name__
+            )
+            return []
+        return _hit_list(data, limit)
+
+    def _memory_query(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Call the MCP ``memory_query`` tool and return its JSON result body."""
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -94,7 +152,7 @@ class AiMemoryClient:
         }
         r = self._request(
             "POST",
-            "/mcp",
+            MCP_PATH,
             json=payload,
             headers={"Accept": "application/json, text/event-stream"},
             timeout=SEARCH_TIMEOUT,
@@ -109,7 +167,7 @@ class AiMemoryClient:
         content = result.get("content")
         if not isinstance(content, list):
             log.warning("memory_query response has no content list")
-            return []
+            return {}
         for item in content:
             if not isinstance(item, dict) or item.get("type") != "text":
                 continue
@@ -118,11 +176,9 @@ class AiMemoryClient:
             except (TypeError, ValueError):
                 continue
             if isinstance(data, dict):
-                hits = data.get("hits", data.get("results", data.get("pages", [])))
-                if isinstance(hits, list):
-                    return [hit for hit in hits if isinstance(hit, dict)][:limit]
-        log.warning("memory_query response contained no JSON hit list")
-        return []
+                return data
+        log.warning("memory_query response contained no JSON object")
+        return {}
 
     def write_page(
         self,

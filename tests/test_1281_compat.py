@@ -72,21 +72,21 @@ def _capture(client: AiMemoryClient, response: httpx.Response) -> list[httpx.Req
 
 # --------------------------------------------------------------- MCP search
 
+
 def _mcp_query_response(hits: list[object]) -> httpx.Response:
     return httpx.Response(
         200,
         json={
             "jsonrpc": "2.0",
             "id": 1,
-            "result": {
-                "content": [{"type": "text", "text": json.dumps({"hits": hits})}]
-            },
+            "result": {"content": [{"type": "text", "text": json.dumps({"hits": hits})}]},
         },
     )
 
 
 def _mcp_arguments(request: httpx.Request) -> dict[str, object]:
-    return json.loads(request.content)["params"]["arguments"]
+    arguments: dict[str, object] = json.loads(request.content)["params"]["arguments"]
+    return arguments
 
 
 def test_search_uses_mcp_memory_query(cfg: AiMemoryConfig) -> None:
@@ -100,11 +100,41 @@ def test_search_uses_mcp_memory_query(cfg: AiMemoryConfig) -> None:
 
 
 # ----------------------------------------------------------- 2. global search
-def test_search_global_sets_explicit_global_true(cfg: AiMemoryConfig) -> None:
+def test_search_global_uses_api_v1_search_without_scope(cfg: AiMemoryConfig) -> None:
+    """Global recall goes to GET /api/v1/search and sends no scope at all.
+    On that route the absence of workspace/project/scopes IS the explicit
+    cross-project mode (SearchMode::Global, ai-memory-web routes/api.rs)."""
     client = AiMemoryClient(cfg)
-    seen = _capture(client, _mcp_query_response([]))
+    seen = _capture(client, httpx.Response(200, json=[]))
     client.search("q", global_search=True)
-    assert _mcp_arguments(seen[0]) == {"query": "q", "limit": 3, "global": True}
+    assert len(seen) == 1
+    assert seen[0].method == "GET"
+    assert seen[0].url.path == "/api/v1/search"
+    assert dict(seen[0].url.params) == {"q": "q", "limit": "3"}
+
+
+def test_search_global_fallback_reads_global_hits(cfg: AiMemoryConfig) -> None:
+    """Regression: memory_query(global=true) answers ``hits: []`` plus
+    ``global_hits: [...]``. Reading ``hits`` returned nothing for every global
+    recall, so the fallback must read ``global_hits``."""
+    client = AiMemoryClient(cfg)
+    text = json.dumps({"hits": [], "global_hits": [{"path": "x.md", "workspace_name": "w"}]})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/search":
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [{"type": "text", "text": text}]},
+            },
+        )
+
+    client._transport = httpx.MockTransport(handler)
+    hits = client.search("q", global_search=True)
+    assert hits == [{"path": "x.md", "workspace": "w"}]
 
 
 def test_provider_search_is_scoped_by_default(offline_provider: AiMemoryProvider) -> None:

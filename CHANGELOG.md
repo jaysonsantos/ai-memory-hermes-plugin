@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.2] — 2026-09-09
+
+### Changed — global recall through the REST API
+
+- Global recall (`recall_scope: global`) now calls `GET /api/v1/search` with
+  no scope parameters. ai-memory 2.1.1 treats a request without `workspace`,
+  `project` or `scopes` on that route as the cross-project search
+  (`SearchMode::Global` in `ai-memory-web/src/routes/api.rs`). It runs the
+  same `pages_fts` query and authority reranking as MCP
+  `memory_query(global=true)` (`ReaderPool::search_pages` versus
+  `search_pages_with_meta`). Each hit carries `workspace`, `project` and
+  `kind`. Three live queries against the deployed 2.1.1 server returned
+  identical hits from both paths.
+- Project recall stays on MCP `memory_query` with the full workspace/project
+  pair. That path runs the hybrid ranker (FTS5, entity, graph and vector
+  streams) and unions the `_global` preferences scope. The REST route is
+  FTS5-only for one project, so a move would lose result quality.
+- `AiMemoryClient.search` raises `ValueError` when a `workspace` or `project`
+  is passed together with `global_search=True`.
+
+### Fixed
+
+- Global recall returned no hits. `memory_query(global=true)` answers
+  `hits: []` and puts the results under `global_hits`, and the client read
+  `hits` only. The MCP path now reads `global_hits`. It is the fallback when
+  `GET /api/v1/search` answers 404, which happens when the server runs
+  without `--enable-web`. The fallback renames `workspace_name` and
+  `project_name` to `workspace` and `project`, so both paths return the same
+  hit shape.
+
 ## [0.2.1] — 2026-09-09
 
 - Route provider recall through the canonical MCP `memory_query` operation.

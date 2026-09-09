@@ -136,7 +136,7 @@ When a new conversation starts, the provider resolves:
 ### Before Each Turn (`prefetch`)
 
 The agent calls `prefetch(query)` with the user's message. The provider:
-1. Searches ai-memory wiki with `GET /admin/search?q=<query>&limit=3`
+1. Searches the ai-memory wiki. Project scope calls MCP `memory_query` with the workspace/project pair. Global scope calls `GET /api/v1/search?q=<query>&limit=3` with no scope parameters.
 2. Returns snippets as a string block
 3. Injected into the model's context before the turn
 

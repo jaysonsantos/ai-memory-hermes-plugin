@@ -1,5 +1,5 @@
 name: ai-memory
-version: 0.2.1
+version: 0.2.2
 description: "ai-memory wiki-backed long-term memory provider"
 kind: exclusive
 entry_point: __init__.py

@@ -480,7 +480,8 @@ class AiMemoryProvider(MemoryProvider):
         # Scoped by default. Reads are restricted to the configured
         # workspace/project pair, so recall cannot pull another project's notes
         # into the Hermes turn. recall_scope="global" opts in to cross-agent
-        # recall across every project on the server.
+        # recall across every project on the server (GET /api/v1/search with
+        # no scope; project recall goes through MCP memory_query).
         #
         # Scope is all-or-nothing: ai-memory resolves a project *within* a
         # workspace, so a half scope either fails to resolve or silently widens.
