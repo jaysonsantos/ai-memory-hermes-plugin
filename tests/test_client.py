@@ -37,6 +37,7 @@ def test_client_search_success(client: AiMemoryClient) -> None:
         assert request.method == "POST"
         assert request.url.path == "/mcp"
         assert request.headers["Authorization"] == "Bearer test-token"
+        assert request.headers["Accept"] == "application/json, text/event-stream"
         body = json.loads(request.content)
         assert body["method"] == "tools/call"
         assert body["params"] == {

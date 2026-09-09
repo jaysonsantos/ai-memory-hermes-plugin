@@ -51,7 +51,11 @@ class AiMemoryClient:
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         url = f"{self._base}{path}"
         extra_headers = kwargs.pop("headers", {})
-        headers = {**self._client.headers, **extra_headers}
+        # Merge case-insensitively. httpx's default headers contain lowercase
+        # ``accept: */*``; adding a separate ``Accept`` key produced two values,
+        # and ai-memory correctly rejected the MCP request with HTTP 406.
+        headers = {str(key).lower(): str(value) for key, value in self._client.headers.items()}
+        headers.update({str(key).lower(): str(value) for key, value in extra_headers.items()})
         timeout = kwargs.pop("timeout", SEARCH_TIMEOUT)
         if self._transport:
             with httpx.Client(transport=self._transport, timeout=timeout) as c:
