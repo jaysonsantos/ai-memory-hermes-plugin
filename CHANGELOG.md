@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] — 2026-09-09
+
+- Route provider recall through the canonical MCP `memory_query` operation.
+- Send `global: true` explicitly for global recall instead of relying on omitted scope fields.
+
 ## [0.2.0] — 2026-09-08
 
 Compatibility with Hermes Agent 0.21.1 and ai-memory 2.1.0, plus two security

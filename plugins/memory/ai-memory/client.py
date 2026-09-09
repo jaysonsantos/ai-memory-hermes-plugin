@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -63,31 +64,61 @@ class AiMemoryClient:
         workspace: str | None = None,
         project: str | None = None,
         limit: int = 3,
+        global_search: bool = False,
     ) -> list[dict[str, Any]]:
-        """Full-text search the ai-memory wiki.
+        """Search through ai-memory's canonical MCP ``memory_query`` tool.
 
-        ai-memory 1.28.1 exposes ``GET /admin/search?q=&limit=``; the
-        ``POST /api/v1/search`` this used to call does not exist and 404s.
-
-        Scope is all-or-nothing. ai-memory resolves a project *within* a
-        workspace, so a lone ``project=`` has no workspace to resolve
-        against and a lone ``workspace=`` silently widens the scope past
-        what the caller asked for. Passing neither searches globally,
-        across every project — which is what cross-agent recall needs.
+        Global search is explicit in ai-memory 2.x: ``global=true`` selects the
+        cross-workspace/project FTS stream. Project search instead supplies the
+        complete workspace/project pair. Never infer global scope merely from
+        missing scope fields; that can resolve to the server's default project.
         """
-        params: dict[str, Any] = {"q": query, "limit": limit}
-        if workspace and project:
-            params["workspace"] = workspace
-            params["project"] = project
-        r = self._request("GET", "/admin/search", params=params, timeout=SEARCH_TIMEOUT)
+        arguments: dict[str, Any] = {"query": query, "limit": limit}
+        if global_search:
+            arguments["global"] = True
+        elif workspace and project:
+            arguments["workspace"] = workspace
+            arguments["project"] = project
+        else:
+            raise ValueError("project search requires workspace and project")
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "memory_query", "arguments": arguments},
+        }
+        r = self._request(
+            "POST",
+            "/mcp",
+            json=payload,
+            headers={"Accept": "application/json, text/event-stream"},
+            timeout=SEARCH_TIMEOUT,
+        )
         r.raise_for_status()
-        data = r.json()
-        if isinstance(data, dict):
-            data = data.get("results", data.get("pages", []))
-        if not isinstance(data, list):
-            log.warning("search response has unexpected type: %s", type(data).__name__)
+        envelope = r.json()
+        if not isinstance(envelope, dict) or envelope.get("error"):
+            raise RuntimeError(f"memory_query failed: {envelope!r}")
+        result = envelope.get("result")
+        if not isinstance(result, dict) or result.get("isError"):
+            raise RuntimeError(f"memory_query failed: {result!r}")
+        content = result.get("content")
+        if not isinstance(content, list):
+            log.warning("memory_query response has no content list")
             return []
-        return [item for item in data if isinstance(item, dict)][:limit]
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
+            try:
+                data = json.loads(item.get("text", ""))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, dict):
+                hits = data.get("hits", data.get("results", data.get("pages", [])))
+                if isinstance(hits, list):
+                    return [hit for hit in hits if isinstance(hit, dict)][:limit]
+        log.warning("memory_query response contained no JSON hit list")
+        return []
 
     def write_page(
         self,

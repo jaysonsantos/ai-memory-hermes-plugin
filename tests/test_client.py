@@ -19,18 +19,36 @@ def client() -> AiMemoryClient:
     )
 
 
+def _mcp_response(hits: object) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps({"hits": hits})}]
+            },
+        },
+    )
+
+
 def test_client_search_success(client: AiMemoryClient) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "GET"
-        assert request.url.path == "/admin/search"
+        assert request.method == "POST"
+        assert request.url.path == "/mcp"
         assert request.headers["Authorization"] == "Bearer test-token"
-        assert dict(request.url.params) == {
-            "q": "test query",
-            "limit": "3",
-            "workspace": "hermes",
-            "project": "hermes-test",
+        body = json.loads(request.content)
+        assert body["method"] == "tools/call"
+        assert body["params"] == {
+            "name": "memory_query",
+            "arguments": {
+                "query": "test query",
+                "limit": 3,
+                "workspace": "hermes",
+                "project": "hermes-test",
+            },
         }
-        return httpx.Response(200, json=[{"path": "test.md"}])
+        return _mcp_response([{"path": "test.md"}])
 
     client._transport = httpx.MockTransport(handler)
     results = client.search("test query", workspace="hermes", project="hermes-test", limit=3)
@@ -44,7 +62,7 @@ def test_client_search_raises_on_http_error(client: AiMemoryClient) -> None:
 
     client._transport = httpx.MockTransport(handler)
     with pytest.raises(httpx.HTTPStatusError):
-        client.search("test query")
+        client.search("test query", global_search=True)
 
 
 def test_client_write_page_success(client: AiMemoryClient) -> None:
@@ -152,9 +170,10 @@ def test_client_no_auth_header_when_no_token() -> None:
 
 def test_client_search_passes_workspace_project(client: AiMemoryClient) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["workspace"] == "custom-ws"
-        assert request.url.params["project"] == "custom-proj"
-        return httpx.Response(200, json=[])
+        args = json.loads(request.content)["params"]["arguments"]
+        assert args["workspace"] == "custom-ws"
+        assert args["project"] == "custom-proj"
+        return _mcp_response([])
 
     client._transport = httpx.MockTransport(handler)
     client.search("q", workspace="custom-ws", project="custom-proj")
@@ -170,14 +189,18 @@ def _ok_response(json_data: object) -> httpx.Response:
 
 def test_client_search_uses_search_timeout(client: AiMemoryClient) -> None:
     client._request = MagicMock()
-    client._request.return_value = _ok_response([])
-    client.search("test query")
-    client._request.assert_called_once_with(
-        "GET",
-        "/admin/search",
-        params={"q": "test query", "limit": 3},
-        timeout=SEARCH_TIMEOUT,
+    client._request.return_value = _ok_response(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"content": [{"type": "text", "text": '{"hits": []}'}]},
+        }
     )
+    client.search("test query", global_search=True)
+    request_kwargs = client._request.call_args.kwargs
+    assert client._request.call_args.args == ("POST", "/mcp")
+    assert request_kwargs["timeout"] == SEARCH_TIMEOUT
+    assert request_kwargs["json"]["params"]["arguments"]["global"] is True
 
 
 def test_client_send_hook_uses_hook_timeout(client: AiMemoryClient) -> None:
@@ -191,24 +214,29 @@ def test_client_send_hook_uses_hook_timeout(client: AiMemoryClient) -> None:
 
 def test_client_search_handles_non_dict_response(client: AiMemoryClient) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=["not", "a", "dict"])
-
-    client._transport = httpx.MockTransport(handler)
-    results = client.search("test query")
-    assert results == []
-
-
-def test_client_search_normalizes_legacy_envelope_and_applies_limit(client: AiMemoryClient) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
-                "results": [{"path": "first.md"}, "invalid", {"path": "second.md"}],
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [{"type": "text", "text": '["not", "a", "dict"]'}]},
             },
         )
 
     client._transport = httpx.MockTransport(handler)
-    assert client.search("test query", limit=1) == [{"path": "first.md"}]
+    results = client.search("test query", global_search=True)
+    assert results == []
+
+
+def test_client_search_normalizes_mcp_hits_and_applies_limit(client: AiMemoryClient) -> None:
+    client._transport = httpx.MockTransport(
+        lambda request: _mcp_response(
+            [{"path": "first.md"}, "invalid", {"path": "second.md"}]
+        )
+    )
+    assert client.search("test query", limit=1, global_search=True) == [
+        {"path": "first.md"}
+    ]
 
 
 def test_client_write_page_with_tier_and_pinned(client: AiMemoryClient) -> None:

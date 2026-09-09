@@ -490,6 +490,7 @@ class AiMemoryProvider(MemoryProvider):
             limit=max_results,
             workspace=None if scope_global else self._config.workspace,
             project=None if scope_global else self._config.project,
+            global_search=scope_global,
         )
         return {"ok": True, "results": results}
 

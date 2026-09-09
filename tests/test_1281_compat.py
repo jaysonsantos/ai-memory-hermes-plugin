@@ -8,6 +8,7 @@ sends.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import httpx
@@ -69,57 +70,65 @@ def _capture(client: AiMemoryClient, response: httpx.Response) -> list[httpx.Req
     return seen
 
 
-# --------------------------------------------------------------- 1. endpoint
-def test_search_uses_admin_search_not_api_v1(cfg: AiMemoryConfig) -> None:
-    """POST /api/v1/search 404s on 1.28.1; the route is GET /admin/search."""
+# --------------------------------------------------------------- MCP search
+
+def _mcp_query_response(hits: list[object]) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps({"hits": hits})}]
+            },
+        },
+    )
+
+
+def _mcp_arguments(request: httpx.Request) -> dict[str, object]:
+    return json.loads(request.content)["params"]["arguments"]
+
+
+def test_search_uses_mcp_memory_query(cfg: AiMemoryConfig) -> None:
     client = AiMemoryClient(cfg)
-    seen = _capture(client, httpx.Response(200, json=[]))
-    client.search("anything")
+    seen = _capture(client, _mcp_query_response([]))
+    client.search("anything", workspace="hermes", project="hermes-test")
     assert len(seen) == 1
-    assert seen[0].method == "GET"
-    assert seen[0].url.path == "/admin/search"
-    assert "/api/v1/search" not in str(seen[0].url)
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/mcp"
+    assert json.loads(seen[0].content)["params"]["name"] == "memory_query"
 
 
 # ----------------------------------------------------------- 2. global search
-def test_search_without_scope_sends_no_workspace_or_project(cfg: AiMemoryConfig) -> None:
+def test_search_global_sets_explicit_global_true(cfg: AiMemoryConfig) -> None:
     client = AiMemoryClient(cfg)
-    seen = _capture(client, httpx.Response(200, json=[]))
-    client.search("q")
-    params = dict(seen[0].url.params)
-    assert params == {"q": "q", "limit": "3"}
+    seen = _capture(client, _mcp_query_response([]))
+    client.search("q", global_search=True)
+    assert _mcp_arguments(seen[0]) == {"query": "q", "limit": 3, "global": True}
 
 
 def test_provider_search_is_scoped_by_default(offline_provider: AiMemoryProvider) -> None:
-    """Recall stays inside the configured workspace/project.
-
-    Global recall read every project on the server and injected the text into
-    the Hermes turn. It is still available, but only as an explicit opt-in
-    (recall_scope="global").
-    """
     offline_provider._client.search.return_value = []
     offline_provider._search({"query": "shared fact", "max_results": 4})
     kwargs = offline_provider._client.search.call_args.kwargs
-    assert kwargs["query"] == "shared fact"
-    assert kwargs["limit"] == 4
     assert kwargs["workspace"] == offline_provider._config.workspace
     assert kwargs["project"] == offline_provider._config.project
+    assert kwargs["global_search"] is False
 
 
 def test_provider_search_global_scope_is_opt_in(
     offline_provider: AiMemoryProvider,
 ) -> None:
-    """Cross-agent recall keeps working when the operator asks for it."""
     offline_provider._config.recall_scope = "global"
     offline_provider._client.search.return_value = []
     offline_provider._search({"query": "shared fact", "max_results": 4})
     kwargs = offline_provider._client.search.call_args.kwargs
     assert kwargs["workspace"] is None
     assert kwargs["project"] is None
+    assert kwargs["global_search"] is True
 
 
 def test_provider_write_stays_scoped(offline_provider: AiMemoryProvider) -> None:
-    """Only reads go global — writes keep the Hermes scope."""
     offline_provider._client.write_page.return_value = {"ok": True}
     offline_provider._write({"path": "p.md", "body": "b"})
     kwargs = offline_provider._client.write_page.call_args.kwargs
@@ -130,40 +139,37 @@ def test_provider_write_stays_scoped(offline_provider: AiMemoryProvider) -> None
 # ----------------------------------------------------------- 3. scoped search
 def test_search_with_both_scope_keys_sends_both(cfg: AiMemoryConfig) -> None:
     client = AiMemoryClient(cfg)
-    seen = _capture(client, httpx.Response(200, json=[]))
+    seen = _capture(client, _mcp_query_response([]))
     client.search("q", workspace="ws", project="proj")
-    params = dict(seen[0].url.params)
-    assert params["workspace"] == "ws"
-    assert params["project"] == "proj"
+    args = _mcp_arguments(seen[0])
+    assert args["workspace"] == "ws"
+    assert args["project"] == "proj"
+    assert "global" not in args
 
 
 @pytest.mark.parametrize(
     "workspace,project",
-    [("ws", None), (None, "proj")],
+    [("ws", None), (None, "proj"), (None, None)],
 )
-def test_search_partial_scope_is_dropped(
+def test_search_requires_full_scope_or_explicit_global(
     cfg: AiMemoryConfig, workspace: str | None, project: str | None
 ) -> None:
-    """Half a scope is worse than none — ai-memory resolves project in a workspace."""
     client = AiMemoryClient(cfg)
-    seen = _capture(client, httpx.Response(200, json=[]))
-    client.search("q", workspace=workspace, project=project)
-    params = dict(seen[0].url.params)
-    assert "workspace" not in params
-    assert "project" not in params
+    with pytest.raises(ValueError, match="requires workspace and project"):
+        client.search("q", workspace=workspace, project=project)
 
 
 def test_search_empty_results(cfg: AiMemoryConfig) -> None:
     client = AiMemoryClient(cfg)
-    _capture(client, httpx.Response(200, json=[]))
-    assert client.search("nothing matches this") == []
+    _capture(client, _mcp_query_response([]))
+    assert client.search("nothing", workspace="hermes", project="hermes-test") == []
 
 
 def test_search_honours_limit(cfg: AiMemoryConfig) -> None:
     client = AiMemoryClient(cfg)
-    seen = _capture(client, httpx.Response(200, json=[{"path": f"{i}.md"} for i in range(10)]))
-    results = client.search("q", limit=2)
-    assert dict(seen[0].url.params)["limit"] == "2"
+    seen = _capture(client, _mcp_query_response([{"path": f"{i}.md"} for i in range(10)]))
+    results = client.search("q", workspace="hermes", project="hermes-test", limit=2)
+    assert _mcp_arguments(seen[0])["limit"] == 2
     assert len(results) == 2
 
 
