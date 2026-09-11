@@ -325,8 +325,19 @@ def test_project_falls_back_to_hermes_default(offline_provider: AiMemoryProvider
     assert offline_provider._config.project == "hermes-default"
 
 
-def test_agent_workspace_sets_workspace_name(offline_provider: AiMemoryProvider) -> None:
-    """agent_workspace is a workspace NAME, never a filesystem path."""
+def test_configured_workspace_is_not_overwritten(
+    offline_provider: AiMemoryProvider,
+) -> None:
+    """Hermes's generic routing identity must not override ai-memory.json."""
+    offline_provider._config.workspace = "default"
+    offline_provider.initialize("sess-1", hermes_home="", agent_workspace="hermes")
+    assert offline_provider._config.workspace == "default"
+
+
+def test_agent_workspace_is_fallback_when_workspace_empty(
+    offline_provider: AiMemoryProvider,
+) -> None:
+    offline_provider._config.workspace = ""
     offline_provider.initialize("sess-1", hermes_home="", agent_workspace="team-ws")
     assert offline_provider._config.workspace == "team-ws"
 
