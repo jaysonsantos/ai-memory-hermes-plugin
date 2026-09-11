@@ -148,12 +148,19 @@ class AiMemoryProvider(MemoryProvider):
             if auth_token:
                 self._config.auth_token = auth_token
 
-            # Workspace precedence: explicit override, then what Hermes
-            # reports, then whatever ai-memory.json already held.
-            # `agent_workspace` is a workspace NAME, not a filesystem path.
-            workspace = kwargs.get("ai_memory_workspace", "") or kwargs.get("agent_workspace", "")
+            # Workspace precedence: explicit ai-memory override, then the
+            # workspace configured in ai-memory.json, and only then Hermes's
+            # generic agent_workspace as a fallback. Hermes uses
+            # agent_workspace="hermes" for its own routing identity; letting
+            # that override ai-memory.json silently sends writes to the wrong
+            # ai-memory workspace.
+            workspace = kwargs.get("ai_memory_workspace", "")
             if workspace:
                 self._config.workspace = workspace
+            elif not self._config.workspace:
+                agent_workspace = kwargs.get("agent_workspace", "")
+                if agent_workspace:
+                    self._config.workspace = agent_workspace
 
             # Project precedence: explicit override, then a project already
             # configured in ai-memory.json, then a name derived from the
